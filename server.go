@@ -188,7 +188,7 @@ func monitor(k string, heartBeatInterval time.Duration) {
 			allMiners.Unlock()
 			return
 		}
-		outLog.Printf("%s is alive\n", allMiners.all[k].Address.String())
+		//outLog.Printf("%s is alive\n", allMiners.all[k].Address.String())
 		allMiners.Unlock()
 		time.Sleep(heartBeatInterval)
 	}
