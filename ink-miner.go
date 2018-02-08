@@ -27,7 +27,7 @@ var(
 	PubKey			ecdsa.PublicKey			/* Public and private key pair for validation */
 	PrivKey			*ecdsa.PrivateKey
 
-	errLog          *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
+	errLog          *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 
 )
 
