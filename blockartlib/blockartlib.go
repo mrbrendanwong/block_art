@@ -12,6 +12,7 @@ import (
 	"fmt"
 	"net"
 	"net/rpc"
+	"sync"
 )
 
 // Represents a type of shape in the BlockArt system.
@@ -186,7 +187,11 @@ type Canvas interface {
 	CloseCanvas() (inkRemaining uint32, err error)
 }
 
-type CanvasInstance int
+type CanvasInstance struct{
+	sync.RWMutex
+	canvas 	[][]bool
+
+}
 
 func (c CanvasInstance) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
 	return "", "", 0, nil
@@ -203,6 +208,11 @@ func (c CanvasInstance) GetInk() (inkRemaining uint32, err error){
 func (c CanvasInstance) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
 	return 0, nil
 }
+
+func (c CanvasInstance) GetShapes(blockHash string) (shapeHashes []string, err error){
+	return nil, nil
+}
+
 
 func (c CanvasInstance) GetGenesisBlock() (blockHash string, err error){
 	return "", nil
