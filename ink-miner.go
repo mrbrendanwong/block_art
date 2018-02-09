@@ -200,7 +200,7 @@ func GetNodes() (err error) {
 	newMiners := 0
 
 	for _, addr := range addrSet {
-		if addr != LocalAddr {
+		if _, ok := connectedMiners.miners[addr.String()]; !ok && addr != LocalAddr {
 			fmt.Println("Connecting to miner...")
 			// Attempt to establish connections to retrieved miners
 			err = ConnectMiner(addr)
@@ -225,6 +225,7 @@ func GetNodes() (err error) {
 // Represents a miner. Adapted from server.go
 type Miner struct {
 	Address 			net.Addr
+	Key 				ecdsa.PublicKey
 	RecentHeartbeat 	int64
 	MinerConn 			*rpc.Client
 }
@@ -237,7 +238,6 @@ type ConnectedMiners struct {
 
 // Establish RPC connection to other miners
 func ConnectMiner(addr net.Addr) (err error) {
-	//minerNetwork := addr.Network()
 	minerAddr := addr.String()
 	minerConn, err := rpc.Dial("tcp", minerAddr)
 	if err != nil {
@@ -255,75 +255,102 @@ func ConnectMiner(addr net.Addr) (err error) {
 
 	fmt.Println("Connected to miner")
 
-	fmt.Println("Boom")
 	minerPubKey := reply.Key
-	minerPK := pubKeyToString(minerPubKey)
 
-	fmt.Println("Boom")
 	// Register miner to miner map
 	connectedMiners.Lock()
-	connectedMiners.miners[minerPK] = &Miner{
+	connectedMiners.miners[minerAddr] = &Miner{
 		Address: addr,
+		Key: minerPubKey,
 		RecentHeartbeat: time.Now().UnixNano(),
 		MinerConn: minerConn}
 	connectedMiners.Unlock()
 
 	fmt.Println("Registered fellow miner")
 
-	// TODO Start sending heartbeat to miner
+	// Start sending heartbeat to miner
+	go SendMinerHeartbeat(minerConn)
+	fmt.Println("Sending heartbeat to fellow miner")
+
+	go monitor(minerAddr, 2*time.Second)
+	fmt.Println("Monitoring heartbeat of fellow miner")
 
 	return nil
 }
 
+// Register a miner trying to connect as a connected miner
 func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	minerAddr := args.Address
 	minerPubKey := args.Key
-	minerPK := pubKeyToString(minerPubKey)
 
-	fmt.Printf("Miner with address %s trying to connect\n", minerAddr.String(), minerPK)
+	fmt.Printf("Miner with address %s trying to connect\n", minerAddr.String())
 	*reply = MinerInfo{Address: LocalAddr, Key: PubKey}
-	fmt.Println("Miner has been connected")
+	
+	fmt.Println("Attempting to establish return connnection...")
 
-	// TODO
-	// Needs to dial back to other miner? (?)
-	// Needs UDP port of upd listener to send heartbeats back (?)
+	returnConn, err := rpc.Dial("tcp", minerAddr.String())
+	if err != nil {
+		fmt.Printf("Could not initiate return connection to connecting miner %s", minerAddr.String())
+		return err
+	}
+
+	// Resgister to miner to miner map
+	connectedMiners.Lock()
+	connectedMiners.miners[minerAddr.String()] = &Miner{
+		Address: minerAddr,
+		Key: minerPubKey,
+		RecentHeartbeat: time.Now().UnixNano(),
+		MinerConn: returnConn}
+	connectedMiners.Unlock()
+
+	fmt.Println("Return connection established. Miner has been connected")
+
+	// Send heartbeat back to miner
+	go SendMinerHeartbeat(returnConn)
+	fmt.Println("Sending return heartbeat to connecting miner")
+
+	go monitor(minerAddr.String(), 2*time.Second)
+	fmt.Println("Monitoring heartbeat of connecting miner")
 
 	return nil
 }
 
 // Sends heartbeat signals to other miners
-func SendMinerHeartbeat() (err error) {
-	//TODO
-	return nil
-}
-
-// Listens for hearbeat signals from other mienrs
-func ListenMinerHeartbeat() (err error) {
-	//TODO
+func SendMinerHeartbeat(minerConn *rpc.Client) (err error) {
+	var ignore bool
+	for {
+		minerInfo := &MinerInfo{Address: LocalAddr, Key: PubKey}
+		err = minerConn.Call("InkMiner.MinerHeartBeat", minerInfo, &ignore)
+		if err != nil {
+			fmt.Println("Error sending miner heartbeats.", err)
+			return err
+		}
+		time.Sleep(time.Millisecond * 5)
+	}
 	return nil
 }
 
 // Updates heartbeats for miners. Adapted from server.go
-func MinerHeartBeat(key ecdsa.PublicKey, _ignored *bool) (err error) {
+func (m InkMiner) MinerHeartBeat(minerInfo *MinerInfo, _ignored *bool) (err error) {
 	connectedMiners.Lock()
 	defer connectedMiners.Unlock()
-	k := pubKeyToString(key)
-	if _, ok := connectedMiners.miners[k]; !ok {
+	minerAddr := minerInfo.Address.String()
+	if _, ok := connectedMiners.miners[minerAddr]; !ok {
 		return err
 	}
 
-	connectedMiners.miners[k].RecentHeartbeat = time.Now().UnixNano()
+	connectedMiners.miners[minerAddr].RecentHeartbeat = time.Now().UnixNano()
 
 	return nil
 }
 
 // Deletes dead miners. Adapted from server.go
-func monitor(k string, heartBeatInterval time.Duration) {
+func monitor(minerAddr string, heartBeatInterval time.Duration) {
 	for {
 		connectedMiners.Lock()
-		if time.Now().UnixNano()-connectedMiners.miners[k].RecentHeartbeat > int64(heartBeatInterval) {
-			fmt.Printf("%s timed out\n", connectedMiners.miners[k].Address.String())
-			delete(connectedMiners.miners, k)
+		if time.Now().UnixNano()-connectedMiners.miners[minerAddr].RecentHeartbeat > int64(heartBeatInterval) {
+			fmt.Printf("%s timed out\n", connectedMiners.miners[minerAddr].Address.String())
+			delete(connectedMiners.miners, minerAddr)
 			connectedMiners.Unlock()
 			return
 		}
