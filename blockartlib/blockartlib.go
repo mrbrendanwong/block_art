@@ -8,7 +8,11 @@ library (blockartlib) to be used in project 1 of UBC CS 416 2017W2.
 package blockartlib
 
 import "crypto/ecdsa"
-import "fmt"
+import (
+	"fmt"
+	"net"
+	"net/rpc"
+)
 
 // Represents a type of shape in the BlockArt system.
 type ShapeType int
@@ -180,6 +184,36 @@ type Canvas interface {
 	// Closes the canvas/connection to the BlockArt network.
 	// - DisconnectedError
 	CloseCanvas() (inkRemaining uint32, err error)
+}
+
+type CanvasInstance int
+
+func (c CanvasInstance) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
+	return "", "", 0, nil
+}
+
+func (c CanvasInstance) GetSvgString(shapeHash string) (svgString string, err error){
+	return "", nil
+}
+
+func (c CanvasInstance) GetInk() (inkRemaining uint32, err error){
+	return 0, nil
+}
+
+func (c CanvasInstance) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
+	return 0, nil
+}
+
+func (c CanvasInstance) GetGenesisBlock() (blockHash string, err error){
+	return "", nil
+}
+
+func (c CanvasInstance) GetChildren(blockHash string) (blockHashes []string, err error){
+	return nil, nil
+}
+
+func (c CanvasInstance) CloseCanvas() (inkRemaining uint32, err error){
+	return 0, nil
 }
 
 // The constructor for a new Canvas object instance. Takes the miner's
