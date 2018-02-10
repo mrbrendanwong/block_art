@@ -10,9 +10,9 @@ package blockartlib
 import "crypto/ecdsa"
 import (
 	"fmt"
-	"net"
 	"net/rpc"
 	"sync"
+	"os"
 )
 
 // Represents a type of shape in the BlockArt system.
@@ -187,42 +187,63 @@ type Canvas interface {
 	CloseCanvas() (inkRemaining uint32, err error)
 }
 
+type ArtNode struct{
+	minerAddr 	string
+	Miner       *rpc.Client
+}
+
 type CanvasInstance struct{
 	sync.RWMutex
 	canvas 	[][]bool
+	file 	*os.File
 
 }
 
-func (c CanvasInstance) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
+var(
+	initiated 		bool
+	BACanvas		*CanvasInstance
+
+)
+
+func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
 	return "", "", 0, nil
 }
 
-func (c CanvasInstance) GetSvgString(shapeHash string) (svgString string, err error){
+func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error){
 	return "", nil
 }
 
-func (c CanvasInstance) GetInk() (inkRemaining uint32, err error){
+func (a ArtNode) GetInk() (inkRemaining uint32, err error){
 	return 0, nil
 }
 
-func (c CanvasInstance) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
+func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
 	return 0, nil
 }
 
-func (c CanvasInstance) GetShapes(blockHash string) (shapeHashes []string, err error){
+func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error){
 	return nil, nil
 }
 
 
-func (c CanvasInstance) GetGenesisBlock() (blockHash string, err error){
+func (a ArtNode) GetGenesisBlock() (blockHash string, err error){
 	return "", nil
 }
 
-func (c CanvasInstance) GetChildren(blockHash string) (blockHashes []string, err error){
+func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error){
 	return nil, nil
 }
 
-func (c CanvasInstance) CloseCanvas() (inkRemaining uint32, err error){
+func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
+	fmt.Println("Closing canvas..")
+	// TODO:
+	// Get inkRemaining from miner
+
+	// Unmount art node from miner
+
+	// Close connection to miner
+	a.Miner.Close()
+
 	return 0, nil
 }
 
@@ -237,7 +258,38 @@ func (c CanvasInstance) CloseCanvas() (inkRemaining uint32, err error){
 // Can return the following errors:
 // - DisconnectedError
 func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, setting CanvasSettings, err error) {
-	// TODO
+	// Connect art node to miner
+	miner, err := rpc.Dial("tcp", minerAddr)
+	if err != nil{
+		return nil, CanvasSettings{}, DisconnectedError("")
+	}
+
+	// Create art node
+	canvas = &ArtNode{minerAddr, miner}
+
+	//TODO:
+	// Mount art node on miner
+	// Get CanvasSettings from miner
+
+	// create canvas if not yet created
+	if !initiated {
+		createCanvas(1024, 1024)				// TODO: change to canvas settings received from miner
+	}
 	// For now return DisconnectedError
-	return nil, CanvasSettings{}, DisconnectedError("")
+	return canvas, CanvasSettings{1024,1024}, nil
+}
+
+func createCanvas(x int, y int){
+	fmt.Println("Creating canvas...")
+	grid := make([][]bool, y)
+	for i:= 0 ; i < y ; i++{
+		grid[i] = make([]bool, x)
+	}
+
+	file, err := os.Create("/tmp/blockArt.html")
+	if err != nil{
+		fmt.Println("Error: could not create HTML file.")
+	}
+
+	BACanvas = &CanvasInstance{canvas: grid, file: file}
 }
