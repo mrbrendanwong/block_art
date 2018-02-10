@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
 	"log"
 
 	"./blockartlib"
@@ -139,9 +138,17 @@ func handleErrorFatal(msg string, e error) {
 
 func ConnectServer(serverAddr string) {
 	// Tentative method of retrieving local addr
-	listOfAddrs, _ := net.InterfaceAddrs()
-	splitAddr := strings.Split(listOfAddrs[1].String(), "/")
-	localAddr := fmt.Sprintf("%s%s", splitAddr[0], ":0")
+	// https://stackoverflow.com/questions/23558425/how-do-i-get-the-local-ip-address-in-go
+	var localAddr string
+	localHostName, _ := os.Hostname()
+	listOfAddr, _ := net.LookupIP(localHostName)
+	for _, addr := range listOfAddr {
+		if ok := addr.To4(); ok != nil {
+			localAddr = ok.String()
+		}
+	}
+
+	localAddr = fmt.Sprintf("%s%s", localAddr, ":0")
 
 	ln, _ := net.Listen("tcp", localAddr)
 	LocalAddr = ln.Addr()
