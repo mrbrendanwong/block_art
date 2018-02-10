@@ -7,18 +7,19 @@
 package main
 
 import (
-	"os"
-	"fmt"
-	"net/rpc"
-	"net"
 	"crypto/ecdsa"
-	"encoding/gob"
 	"crypto/elliptic"
-	"time"
+	"encoding/gob"
+	"fmt"
+	"net"
+	"net/rpc"
+	"os"
+	"strings"
 	"sync"
+	"time"
+	"log"
 
 	"./blockartlib"
-	"log"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -28,16 +29,16 @@ import (
 // For interfacing with other miners
 type InkMiner int
 
-var(
+var (
 	// Identity related variables
-	Server 			*rpc.Client				/* Connection to Server */
-	PubKey			ecdsa.PublicKey			/* Public and private key pair for validation */
-	PrivKey			*ecdsa.PrivateKey
-	LocalAddr 		net.Addr
+	Server    *rpc.Client     /* Connection to Server */
+	PubKey    ecdsa.PublicKey /* Public and private key pair for validation */
+	PrivKey   *ecdsa.PrivateKey
+	LocalAddr net.Addr
 
 	// Error logging
-	errLog          *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
-	outLog          *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
+	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
+	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 
 	// Connected mineres
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
@@ -100,10 +101,10 @@ type MinerNetSettings struct {
 
 // Represents a miner. Adapted from server.go
 type Miner struct {
-	Address 			net.Addr
-	Key 				ecdsa.PublicKey
-	RecentHeartbeat 	int64
-	MinerConn 			*rpc.Client
+	Address         net.Addr
+	Key             ecdsa.PublicKey
+	RecentHeartbeat int64
+	MinerConn       *rpc.Client
 }
 
 // Map of all miners currently connected
@@ -172,7 +173,7 @@ func ConnectServer(serverAddr string) {
 	// Register miner on server
 	var settings MinerNetSettings
 	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &settings)
-	if err != nil{
+	if err != nil {
 		outLog.Println(err)
 		return
 	}
@@ -189,7 +190,7 @@ func ConnectServer(serverAddr string) {
 	miner := rpc.NewServer()
 	miner.Register(Inkminer)
 
-	for{
+	for {
 		conn, _ := ln.Accept()
 		go miner.ServeConn(conn)
 	}
@@ -198,9 +199,9 @@ func ConnectServer(serverAddr string) {
 /*
  * This function sends heartbeat signals to server to ensure connectivity
  */
-func sendHeartBeats() (err error){
+func sendHeartBeats() (err error) {
 	var ignore bool
-	for{
+	for {
 		err = Server.Call("RServer.HeartBeat", PubKey, &ignore)
 		if err != nil {
 			outLog.Println("Error sending heartbeats.")
@@ -211,7 +212,6 @@ func sendHeartBeats() (err error){
 	}
 	return nil
 }
-
 
 /* Retrieves a list of new miner addresses from the server
  * Attemps to connect to the new miners it retrieves
@@ -277,10 +277,10 @@ func ConnectMiner(addr net.Addr) (err error) {
 	// Register miner to miner map
 	connectedMiners.Lock()
 	connectedMiners.miners[minerAddr] = &Miner{
-		Address: addr,
-		Key: minerPubKey,
+		Address:         addr,
+		Key:             minerPubKey,
 		RecentHeartbeat: time.Now().UnixNano(),
-		MinerConn: minerConn}
+		MinerConn:       minerConn}
 	connectedMiners.Unlock()
 
 	outLog.Println("Registered fellow miner")
@@ -302,7 +302,7 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 
 	outLog.Printf("Miner with address %s trying to connect\n", minerAddr.String())
 	*reply = MinerInfo{Address: LocalAddr, Key: PubKey}
-	
+
 	outLog.Println("Attempting to establish return connnection...")
 
 	returnConn, err := rpc.Dial("tcp", minerAddr.String())
@@ -314,10 +314,10 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	// Resgister to miner to miner map
 	connectedMiners.Lock()
 	connectedMiners.miners[minerAddr.String()] = &Miner{
-		Address: minerAddr,
-		Key: minerPubKey,
+		Address:         minerAddr,
+		Key:             minerPubKey,
 		RecentHeartbeat: time.Now().UnixNano(),
-		MinerConn: returnConn}
+		MinerConn:       returnConn}
 	connectedMiners.Unlock()
 
 	outLog.Println("Return connection established. Miner has been connected")
@@ -384,7 +384,7 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////
 
-func main(){
+func main() {
 	gob.Register(&net.TCPAddr{})
 	gob.Register(&elliptic.CurveParams{})
 
