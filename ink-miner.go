@@ -9,15 +9,18 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/md5"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
+	"log"
+	"math/rand"
 	"net"
 	"net/rpc"
 	"os"
 	"strings"
 	"sync"
 	"time"
-	"log"
 
 	"./blockartlib"
 )
@@ -43,6 +46,8 @@ var (
 	// Connected mineres
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
 )
+
+var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
 
 ////////////////////////////////////////////////////////////////////////////////
 // STRUCTURES
@@ -374,6 +379,37 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 		connectedMiners.Unlock()
 		time.Sleep(heartBeatInterval)
 	}
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// MINER CALLS
+////////////////////////////////////////////////////////////////////////////////
+// Return nonce with required 0s
+func getNonce(hash string, difficulty int64) string {
+	wantedString := strings.Repeat("0", int(difficulty))
+	var h string
+	var secretMsg string
+
+	for {
+		randNum := rand.Intn(23)
+		secret := make([]byte, randNum)
+		for i := 0; i < randNum; i++ {
+			secret[i] = letters[rand.Intn(len(letters))]
+		}
+
+		h = computeNonceSecretHash(hash, string(secret))
+		if strings.HasSuffix(hash, wantedString) {
+			return string(secret)
+		}
+	}
+}
+
+// Helper: Returns MD5 hash of given hash + secret
+func computeNonceSecretHash(nonce string, secret string) string {
+	h := md5.New()
+	h.Write([]byte(nonce + secret))
+	str := hex.EncodeToString(h.Sum(nil))
+	return str
 }
 
 ////////////////////////////////////////////////////////////////////////////////
