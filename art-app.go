@@ -15,7 +15,6 @@ import "./blockartlib"
 
 import "fmt"
 import "os"
-import "crypto/ecdsa"
 
 func main() {
 	minerAddr := "127.0.0.1:8080"
