@@ -14,10 +14,11 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-	"strings"
+//	"strings"
 	"sync"
 	"time"
 	"log"
+	"errors"
 
 	"./blockartlib"
 )
@@ -35,7 +36,7 @@ var (
 	PubKey    ecdsa.PublicKey /* Public and private key pair for validation */
 	PrivKey   *ecdsa.PrivateKey
 	LocalAddr net.Addr
-
+	Settings  MinerNetSettings
 	// Error logging
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
@@ -379,7 +380,14 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER - ARTIST
 ////////////////////////////////////////////////////////////////////////////////
-
+// Check that key of incoming art node matches key of miner.
+func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)(err error){
+	if PubKey != Key {
+		return errors.New("Mismatch between Public Keys")
+	}
+	*settings = Settings.CanvasSettings
+	return nil
+}
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////

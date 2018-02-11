@@ -14,42 +14,51 @@ package main
 import "./blockartlib"
 
 import "fmt"
-import "os"
+import (
+	"os"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+)
 
 func main() {
 	minerAddr := "127.0.0.1:8080"
-	privKey := stub // TODO: use crypto/ecdsa to read pub/priv keys from a file argument.
+	//privKey := stub // TODO: use crypto/ecdsa to read pub/priv keys from a file argument.
+
+	r, err := os.Open("/dev/urandom")
+	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
+	privKey := *key
+	defer r.Close()
 
 	// Open a canvas.
-	canvas, settings, err := blockartlib.OpenCanvas(minerAddr, privKey)
+	canvas, _, err := blockartlib.OpenCanvas(minerAddr, privKey)
 	if checkError(err) != nil {
 		return
 	}
-
-	validateNum := 2
-
-	// Add a line.
-	shapeHash, blockHash, ink, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 0 5", "transparent", "red")
-	if checkError(err) != nil {
-		return
-	}
-
-	// Add another line.
-	shapeHash2, blockHash2, ink2, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 5 0", "transparent", "blue")
-	if checkError(err) != nil {
-		return
-	}
-
-	// Delete the first line.
-	ink3, err := canvas.DeleteShape(validateNum, shapeHash)
-	if checkError(err) != nil {
-		return
-	}
-
-	// assert ink3 > ink2
+	//
+	//validateNum := 2
+	//
+	//// Add a line.
+	//shapeHash, blockHash, ink, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 0 5", "transparent", "red")
+	//if checkError(err) != nil {
+	//	return
+	//}
+	//
+	//// Add another line.
+	//shapeHash2, blockHash2, ink2, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 5 0", "transparent", "blue")
+	//if checkError(err) != nil {
+	//	return
+	//}
+	//
+	//// Delete the first line.
+	//ink3, err := canvas.DeleteShape(validateNum, shapeHash)
+	//if checkError(err) != nil {
+	//	return
+	//}
+	//
+	//// assert ink3 > ink2
 
 	// Close the canvas.
-	ink4, err := canvas.CloseCanvas()
+	_, err = canvas.CloseCanvas()
 	if checkError(err) != nil {
 		return
 	}

@@ -239,12 +239,12 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 	// TODO:
 	// Get inkRemaining from miner
 
-	// Unmount art node from miner
+	// Unmount art ngitode from miner
 
 	// Close connection to miner
 	a.Miner.Close()
 
-	return 0, nil
+	return 0, nil 			// Return no ink remaining for now
 }
 
 // The constructor for a new Canvas object instance. Takes the miner's
@@ -267,16 +267,21 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	// Create art node
 	canvas = &ArtNode{minerAddr, miner}
 
-	//TODO:
-	// Mount art node on miner
+	// Register art node on miner
 	// Get CanvasSettings from miner
+	var settings CanvasSettings
+	err = miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
+	if err != nil{
+		// Public Key does not match
+		return nil, CanvasSettings{}, err
+	}
 
 	// create canvas if not yet created
 	if !initiated {
-		createCanvas(1024, 1024)				// TODO: change to canvas settings received from miner
+		createCanvas(int(settings.CanvasXMax), int(settings.CanvasYMax))
 	}
 	// For now return DisconnectedError
-	return canvas, CanvasSettings{1024,1024}, nil
+	return canvas, settings, nil
 }
 
 func createCanvas(x int, y int){
