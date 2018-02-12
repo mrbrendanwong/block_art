@@ -13,6 +13,11 @@ import (
 	"net/rpc"
 	"sync"
 	"os"
+	"strconv"
+	"math"
+	"regexp"
+	"strings"
+	"time"
 )
 
 // Represents a type of shape in the BlockArt system.
@@ -25,6 +30,10 @@ const (
 	// Circle shape (extra credit).
 	// CIRCLE
 )
+
+const SVGSTRING_MAXLEN = 128
+const BA_FILE = "blockArt.html"
+
 
 // Settings for a canvas in BlockArt.
 type CanvasSettings struct {
@@ -199,6 +208,11 @@ type CanvasInstance struct{
 
 }
 
+type Coordinates struct {
+	x int
+	y int
+}
+
 var(
 	initiated 		bool
 	BACanvas		*CanvasInstance
@@ -206,6 +220,29 @@ var(
 )
 
 func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
+	if len(shapeSvgString) > SVGSTRING_MAXLEN {
+		return "", "", 0, ShapeSvgStringTooLongError("")
+	}
+	vertices, err := getVertices(shapeSvgString)
+
+	// Check that shape does not overlap any existing shape
+	isValid := isValidShape(vertices, fill != "transparent")
+	if !isValid{
+		return "", "", 0, InvalidShapeSvgStringError("")
+	}
+
+	ink := getAmountInk(vertices, fill != "transparent")
+	if err != nil {
+		return "", "", 0, err
+	}
+	fmt.Println("Ink needed: ", ink)
+
+	// Ask miner if has enough ink
+
+
+
+	// Draw to board
+	drawShape(shapeSvgString, fill, stroke)
 	return "", "", 0, nil
 }
 
@@ -241,12 +278,133 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 
 	// Unmount art ngitode from miner
 
+	// TODO:
+	// only close if last connected miner
+	BACanvas.file.Close()
+
 	// Close connection to miner
 	a.Miner.Close()
 
 	return 0, nil 			// Return no ink remaining for now
 }
 
+// This function returns the list of vertices contained in the SVG string
+func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
+	// L/l : draw a line from current point to point given
+	// H/h : draw horizontal line from current point
+	// V/v : draw vertical line from current point
+	// Z : path back to starting point
+	// ex. M 0 0 L 0 5
+	points := []Coordinates{}
+	r, err := regexp.Compile(`[MmHhVvLlZz][ \-0-9]*`)
+	if err != nil {
+		fmt.Println(err)
+		return nil, err
+	}
+	res := r.FindAllString(shapeSVGString, -1)
+
+	var x_start, y_start, x_current, y_current float64
+	for i := range res {
+		var tmp int64
+		args := strings.Fields(res[i])
+		if args[0] == "M" {
+			// Move to location given
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+			x_start = float64(tmp)
+			x_current = x_start
+			tmp, _ = strconv.ParseInt(args[2], 0, 8)
+			y_start = float64(tmp)
+			y_current = y_start
+
+		} else if args[0] == "L" {
+			// Draw line from start pos to given pos
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+			x_current = math.Abs(float64(tmp))
+			tmp, _ = strconv.ParseInt(args[2], 0, 8)
+			y_current = math.Abs(float64(tmp))
+
+
+		} else if args[0] == "l" {
+			// Draw line from current pos to given pos
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+			x_current = math.Abs(float64(tmp) + x_current)
+			tmp, _ = strconv.ParseInt(args[2], 0, 8)
+			y_current = math.Abs(float64(tmp) + y_current)
+
+		} else if args[0] == "H" {
+			// Draw horizontal line from start pos to given pos
+			tmp, _ := strconv.ParseInt(args[1], 0, 8)
+
+			x_current = math.Abs(float64(tmp))
+
+		} else if args[0] == "h" {
+			// Draw horizontal line from current pos to given pos
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+			x_current = math.Abs(float64(tmp) + x_current)
+
+
+		} else if args[0] == "V" {
+			// Draw vertical line from start pos to given pos
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+
+			y_current = math.Abs(float64(tmp))
+
+		} else if args[0] == "v"{
+			// Draw vertical line from current pos to given pos
+			tmp, _ = strconv.ParseInt(args[1], 0, 8)
+			y_current = math.Abs(float64(tmp) + y_current)
+
+		} else if args[0] == "Z" || args[0] == "z" {
+			// Return to start pos
+			x_current = x_start
+			y_current = y_start
+		}
+		points = append(points, Coordinates{int(x_current), int(y_current)})
+	}
+	return points, nil
+}
+
+// This function returns the amount of ink necessary to draw given shape
+func getAmountInk(points []Coordinates, fill bool)(inkNeeded float64) {
+	// Find Perimeter
+	var area float64 = 0
+	var ink float64 = 0
+	j:= 0
+	if !fill{
+		for j < len(points) - 1 {
+			x_dist := math.Abs(float64(points[j + 1].x - points[j].x))
+			y_dist := math.Abs(float64(points[j+1].y - points[j].y))
+			ink = ink + math.Sqrt(math.Pow(x_dist, 2) + math.Pow(y_dist, 2))
+			j++
+		}
+		return ink
+	}
+
+	// Find Area
+	// https://www.mathopenref.com/coordpolygonarea.html
+	for j < len(points) - 1{
+		area = area + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
+		j++
+	}
+	area = area / 2
+	return area
+}
+
+// This function checks that the given shape does not overlap any existing shapes
+func isValidShape(points []Coordinates, fill bool)(valid bool){
+	// TODO:
+	return true
+}
+
+// This function draws the given shape to HTML file
+func drawShape(shapeSvgString string, fill string, stroke string){
+	f := BACanvas.file
+	ptr, err := f.Seek(-int64(len("</svg>")),2)
+	if err != nil{
+		fmt.Println("ERROR",err)
+	}
+	f.WriteAt([]byte("<path d=\"" + shapeSvgString + "\" fill=\"" + fill + "\" stroke=\"" + stroke + "\"/>\n</svg>"), ptr)
+}
 // The constructor for a new Canvas object instance. Takes the miner's
 // IP:port address string and a public-private key pair (ecdsa private
 // key type contains the public key). Returns a Canvas instance that
@@ -285,13 +443,14 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 }
 
 func createCanvas(x int, y int){
-	fmt.Println("Creating canvas...")
 	grid := make([][]bool, y)
 	for i:= 0 ; i < y ; i++{
 		grid[i] = make([]bool, x)
 	}
 
-	file, err := os.Create("/tmp/blockArt.html")
+	file, err := os.OpenFile(BA_FILE + "_" + time.Now().String(), os.O_CREATE | os.O_WRONLY, 0664)
+	file.Write([]byte("<svg height=\"" + strconv.Itoa(x) + "\" width=\"" + strconv.Itoa(y) + "\">\n</svg>"))
+	//defer file.Close()
 	if err != nil{
 		fmt.Println("Error: could not create HTML file.")
 	}
