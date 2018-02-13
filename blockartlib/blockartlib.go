@@ -8,22 +8,25 @@ library (blockartlib) to be used in project 1 of UBC CS 416 2017W2.
 package blockartlib
 
 import "crypto/ecdsa"
+import "../shared"
 import (
 	"fmt"
 	"net/rpc"
-	"sync"
 	"os"
+	"sync"
 )
-
-// Represents a type of shape in the BlockArt system.
-type ShapeType int
 
 const (
 	// Path shape.
-	PATH ShapeType = iota
+	PATH shared.ShapeType = iota
 
 	// Circle shape (extra credit).
 	// CIRCLE
+)
+
+var (
+	Miner     *rpc.Client
+	minerAddr string
 )
 
 // Settings for a canvas in BlockArt.
@@ -146,7 +149,7 @@ type Canvas interface {
 	// - ShapeSvgStringTooLongError
 	// - ShapeOverlapError
 	// - OutOfBoundsError
-	AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error)
+	AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error)
 
 	// Returns the encoding of the shape as an svg string.
 	// Can return the following errors:
@@ -187,54 +190,91 @@ type Canvas interface {
 	CloseCanvas() (inkRemaining uint32, err error)
 }
 
-type ArtNode struct{
-	minerAddr 	string
-	Miner       *rpc.Client
+type ArtNode struct {
+	minerAddr string
+	Miner     *rpc.Client
 }
 
-type CanvasInstance struct{
+type CanvasInstance struct {
 	sync.RWMutex
-	canvas 	[][]bool
-	file 	*os.File
-
+	canvas [][]bool
+	file   *os.File
 }
 
-var(
-	initiated 		bool
-	BACanvas		*CanvasInstance
-
+var (
+	initiated bool
+	BACanvas  *CanvasInstance
 )
 
-func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
-	return "", "", 0, nil
+// TODO
+func getInkRequired(shape shared.Shape) uint32 {
+	return 5
 }
 
-func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error){
+func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
+	shape := &shared.Shape{
+		ShapeType:      shapeType,
+		ShapeSvgString: shapeSvgString,
+		Fill:           fill,
+		Stroke:         stroke,
+	}
+	InkRequired := getInkRequired(*shape)
+	fmt.Println("trying to get ink")
+	InkRemaining, err := a.GetInk()
+	if err != nil {
+		return "", "", 0, err
+	}
+	if InkRequired > InkRemaining {
+		return "", "", 0, InsufficientInkError(InkRequired)
+	}
+
+	addShapeInfo := &shared.AddShapeInfo{
+		ValidateNum: validateNum,
+		InkRequired: InkRequired,
+		Shape:       *shape,
+	}
+	addShapeResponse := shared.AddShapeResponse{}
+
+	a.Miner.Call("InkMiner.AddShape", addShapeInfo, &addShapeResponse)
+
+	fmt.Printf("IN lib, received respince, ink remaining =: %d", addShapeResponse.InkRemaining)
+
+	return addShapeResponse.ShapeHash, addShapeResponse.BlockHash, addShapeResponse.InkRemaining, addShapeResponse.Err
+}
+
+func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 	return "", nil
 }
 
-func (a ArtNode) GetInk() (inkRemaining uint32, err error){
+func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
+
+	reply := shared.Reply{}
+	error := Miner.Call("InkMiner.GetInk", reply, &reply)
+	if error != nil {
+		return 0, DisconnectedError("Could not get ink")
+	}
+	fmt.Printf("Ink from ink-miner:%d", reply.InkRemaining)
+
+	return reply.InkRemaining, nil
+}
+
+func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
 	return 0, nil
 }
 
-func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
-	return 0, nil
-}
-
-func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error){
+func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
 	return nil, nil
 }
 
-
-func (a ArtNode) GetGenesisBlock() (blockHash string, err error){
+func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 	return "", nil
 }
 
-func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error){
+func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error) {
 	return nil, nil
 }
 
-func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
+func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error) {
 	fmt.Println("Closing canvas..")
 	// TODO:
 	// Get inkRemaining from miner
@@ -244,7 +284,7 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 	// Close connection to miner
 	a.Miner.Close()
 
-	return 0, nil 			// Return no ink remaining for now
+	return 0, nil // Return no ink remaining for now
 }
 
 // The constructor for a new Canvas object instance. Takes the miner's
@@ -260,22 +300,21 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, setting CanvasSettings, err error) {
 	// Connect art node to miner
 	miner, err := rpc.Dial("tcp", minerAddr)
-	if err != nil{
-		return nil, CanvasSettings{}, DisconnectedError("")
+	if err != nil {
+		return nil, CanvasSettings{}, DisconnectedError("Could not open Canvas")
 	}
 
 	// Create art node
 	canvas = &ArtNode{minerAddr, miner}
-
+	Miner = miner
 	// Register art node on miner
 	// Get CanvasSettings from miner
 	var settings CanvasSettings
-	err = miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
-	if err != nil{
+	err = Miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
+	if err != nil {
 		// Public Key does not match
 		return nil, CanvasSettings{}, err
 	}
-
 	// create canvas if not yet created
 	if !initiated {
 		createCanvas(int(settings.CanvasXMax), int(settings.CanvasYMax))
@@ -284,15 +323,15 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	return canvas, settings, nil
 }
 
-func createCanvas(x int, y int){
+func createCanvas(x int, y int) {
 	fmt.Println("Creating canvas...")
 	grid := make([][]bool, y)
-	for i:= 0 ; i < y ; i++{
+	for i := 0; i < y; i++ {
 		grid[i] = make([]bool, x)
 	}
 
 	file, err := os.Create("/tmp/blockArt.html")
-	if err != nil{
+	if err != nil {
 		fmt.Println("Error: could not create HTML file.")
 	}
 
