@@ -449,8 +449,8 @@ func startMining(pubKey ecdsa.PublicKey) {
 	}
 }
 
-// Return nonce with required 0s
-func getNonce(hash string, difficulty int64) string {
+// Return nonce and hash with required 0s
+func getNonce(hash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
 	var secretMsg string
@@ -464,7 +464,7 @@ func getNonce(hash string, difficulty int64) string {
 
 		h = computeNonceSecretHash(hash, string(secret))
 		if strings.HasSuffix(hash, wantedString) {
-			return string(secret)
+			return string(secret), h
 		}
 	}
 }
