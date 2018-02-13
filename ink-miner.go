@@ -185,7 +185,8 @@ func ConnectServer(serverAddr string) {
 
 	// Register miner on server
 	var settings MinerNetSettings
-	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &settings)
+	minerInfo := MinerInfo{LocalAddr, PubKey}
+	err = Server.Call("RServer.Register", minerInfo, &settings)
 	if err != nil {
 		outLog.Println(err)
 		return
@@ -195,7 +196,7 @@ func ConnectServer(serverAddr string) {
 	go sendHeartBeats()
 
 	// start mining noop blocks
-	go startMining(Pubkey)
+	go startMining(minerInfo, &settings)
 
 	// Get nodes from server and attempt to connect to them
 	GetNodes()
@@ -395,7 +396,6 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 
 // Return string version of public key
-
 func pubKeyToString(pubKey ecdsa.PublicKey) string {
 	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pubKey)
 	encodedBytes := hex.EncodeToString(pubKeyBytes)
@@ -404,13 +404,13 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 
 // Mine op block, or validate block by creating block
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
-func startMining(pubKey ecdsa.PublicKey) {
+func startMining(minerInfo *MinerInfo, settings *MinerNetSettings) {
 	// vars needed to create noop block
 	var depth, ink uint32
 	var prevBlockHash, nonce, hash string
-	var pubKey ecdsa.PublicKey
 	var parent *Block
 
+	// Channels
 	opChannel = make(chan int, 3)
 	OpComplete = make(chan int, 3)
 	recvBlockChannel = make(chan int, 3)
@@ -428,7 +428,6 @@ func startMining(pubKey ecdsa.PublicKey) {
 		default:
 			//TODO: Get leaf in longest chain
 			//TODO: Set the variables above
-			leaf = getLongestChain()
 			log.Println("DO SOME WORK")
 		}
 	Rest:
@@ -440,9 +439,10 @@ func startMining(pubKey ecdsa.PublicKey) {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			//TODO: turn pubkey into a string
-			contents := fmt.Sprintf("%s%s", prevHash, pubKey)
-			nonce, hash = getNonce(contents)
+			// Get the value of new hash block and nonce
+			pkeyString = pubKeyToString(minerInfo.Key)
+			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
+			nonce, hash = getNonce(contents, settings.PoWDifficultyNoOpBlock)
 		}
 		select {
 		case <-opChannel:
