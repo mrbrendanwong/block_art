@@ -12,17 +12,16 @@ import (
 	"crypto/md5"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
 	"net"
 	"net/rpc"
 	"os"
-//	"strings"
+	"strings"
 	"sync"
 	"time"
-	"errors"
-
 
 	"./blockartlib"
 )
@@ -47,6 +46,10 @@ var (
 
 	// Connected mineres
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
+
+	// Channel to signal incoming ops, blocks
+	//TODO
+	OpChannel chan int // int is a placeholder -> may be an op string later
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -188,6 +191,9 @@ func ConnectServer(serverAddr string) {
 	// start sending heartbeats
 	go sendHeartBeats()
 
+	// start mining noop blocks
+	go startMining()
+
 	// Get nodes from server and attempt to connect to them
 	GetNodes()
 
@@ -217,7 +223,6 @@ func sendHeartBeats() (err error) {
 		time.Sleep(time.Millisecond * 5)
 
 	}
-	return nil
 }
 
 /* Retrieves a list of new miner addresses from the server
@@ -351,7 +356,6 @@ func sendMinerHeartbeat(minerConn *rpc.Client) (err error) {
 		}
 		time.Sleep(time.Millisecond * 5)
 	}
-	return nil
 }
 
 // Updates heartbeats for miners. Adapted from server.go
@@ -386,6 +390,53 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
+
+// Begin mining of blocks
+// When signal is received, immediately work on op blocks
+// TODO: OR send the op through the channel....
+// TODO: Once it finishes op work, needs to find longest chain and do no-op work
+// TODO: When miner receives an op through RPC, it needs to signal the channel
+// TODO: When miner receives a block, it needs to validate the block before adding it its own chain
+func startMining() {
+	var nonce, hash string
+
+	OpChannel = make(chan int, 3)
+
+	for {
+	findLongestBranch:
+		select {
+		case <-OpChannel:
+			// TODO: Do Opwork
+			OpBlock()
+			goto findLongestBranch
+		default:
+			//TODO: Get leaf in longest chain
+			log.Println("DO SOME WORK")
+		}
+	Rest:
+		select {
+		case <-OpChannel:
+			// TODO: Do Opwork
+			OpBlock()
+			goto findLongestBranch
+		default:
+			//TODO: Find nonce and hash for the block
+			nonce, hash = getNonce( /*the hash of the block + miner publickey*/ )
+		}
+
+		select {
+		case <-OpChannel:
+			// TODO: Do Opwork
+			OpBlock()
+			goto findLongestBranch
+
+		default:
+			// TODO: Create the actual block and disseminate to workers
+			// TODO: Add amount of noop ink to miner
+		}
+	}
+}
+
 // Return nonce with required 0s
 func getNonce(hash string, difficulty int64) string {
 	wantedString := strings.Repeat("0", int(difficulty))
@@ -418,13 +469,14 @@ func computeNonceSecretHash(nonce string, secret string) string {
 // MINER - ARTIST
 ////////////////////////////////////////////////////////////////////////////////
 // Check that key of incoming art node matches key of miner.
-func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)(err error){
+func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings) (err error) {
 	if PubKey != Key {
 		return errors.New("Mismatch between Public Keys")
 	}
 	*settings = Settings.CanvasSettings
 	return nil
 }
+
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////
