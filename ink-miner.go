@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/md5"
+	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
 	"errors"
@@ -393,6 +394,14 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
 
+// Return string version of public key
+
+func pubKeyToString(pubKey ecdsa.PublicKey) string {
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pubKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+	return encodedBytes
+}
+
 // Mine op block, or validate block by creating block
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining(pubKey ecdsa.PublicKey) {
@@ -453,7 +462,6 @@ func startMining(pubKey ecdsa.PublicKey) {
 func getNonce(hash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
-	var secretMsg string
 
 	for {
 		randNum := rand.Intn(23)
