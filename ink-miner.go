@@ -14,13 +14,12 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-//	"strings"
 	"sync"
 	"time"
 	"log"
-	"errors"
 
 	"./blockartlib"
+	"errors"
 )
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -172,8 +171,7 @@ func ConnectServer(serverAddr string) {
 	outLog.Println("Successfully connected")
 
 	// Register miner on server
-	var settings MinerNetSettings
-	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &settings)
+	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &Settings)
 	if err != nil {
 		outLog.Println(err)
 		return
