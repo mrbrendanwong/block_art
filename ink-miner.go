@@ -49,7 +49,8 @@ var (
 
 	// Channel to signal incoming ops, blocks
 	//TODO
-	OpChannel chan int // int is a placeholder -> may be an op string later
+	opChannel       chan int // int is a placeholder -> may be an op string later
+	blockOpComplete chan int
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -393,21 +394,18 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 
 // Begin mining of blocks
 // When signal is received, immediately work on op blocks
-// TODO: OR send the op through the channel....
-// TODO: Once it finishes op work, needs to find longest chain and do no-op work
-// TODO: When miner receives an op through RPC, it needs to signal the channel
 // TODO: When miner receives a block, it needs to validate the block before adding it its own chain
+// A
 func startMining() {
 	var nonce, hash string
 
-	OpChannel = make(chan int, 3)
+	opChannel = make(chan int, 3)
 
 	for {
 	findLongestBranch:
 		select {
-		case <-OpChannel:
-			// TODO: Do Opwork
-			OpBlock()
+		case <-opChannel:
+			<-blockOpComplete
 			goto findLongestBranch
 		default:
 			//TODO: Get leaf in longest chain
@@ -415,9 +413,8 @@ func startMining() {
 		}
 	Rest:
 		select {
-		case <-OpChannel:
-			// TODO: Do Opwork
-			OpBlock()
+		case <-opChannel:
+			<-blockOpComplete
 			goto findLongestBranch
 		default:
 			//TODO: Find nonce and hash for the block
@@ -425,16 +422,21 @@ func startMining() {
 		}
 
 		select {
-		case <-OpChannel:
-			// TODO: Do Opwork
-			OpBlock()
+		case <-opChannel:
+			<-blockOpComplete
 			goto findLongestBranch
-
 		default:
 			// TODO: Create the actual block and disseminate to workers
 			// TODO: Add amount of noop ink to miner
 		}
 	}
+}
+
+//TODO:
+//TODO: Depends on the RPC call from the art node
+// Create block and disseminate to other miners
+func mineOpBlock( /* args of op */ ) {
+
 }
 
 // Return nonce with required 0s
