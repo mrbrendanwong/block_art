@@ -18,11 +18,11 @@ import (
 	"net"
 	"net/rpc"
 	"os"
-//	"strings"
+	"strings"
+	//	"strings"
+	"errors"
 	"sync"
 	"time"
-	"errors"
-
 
 	"./blockartlib"
 )
@@ -386,8 +386,8 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
-// Return nonce with required 0s
-func getNonce(hash string, difficulty int64) string {
+// Return nonce and hash with required 0s
+func getNonce(hash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
 	var secretMsg string
@@ -401,7 +401,7 @@ func getNonce(hash string, difficulty int64) string {
 
 		h = computeNonceSecretHash(hash, string(secret))
 		if strings.HasSuffix(hash, wantedString) {
-			return string(secret)
+			return string(secret), h
 		}
 	}
 }
@@ -418,13 +418,14 @@ func computeNonceSecretHash(nonce string, secret string) string {
 // MINER - ARTIST
 ////////////////////////////////////////////////////////////////////////////////
 // Check that key of incoming art node matches key of miner.
-func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)(err error){
+func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings) (err error) {
 	if PubKey != Key {
 		return errors.New("Mismatch between Public Keys")
 	}
 	*settings = Settings.CanvasSettings
 	return nil
 }
+
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////
