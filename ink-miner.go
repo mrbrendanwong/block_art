@@ -48,10 +48,10 @@ var (
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
 
 	// Channel to signal incoming ops, blocks
-	//TODO
-	opChannel            chan int // int is a placeholder -> may be an op string later
-	blockOpComplete      chan int
-	blockValidateChannel chan int
+	opChannel          chan int // int is a placeholder -> may be an op string later
+	opComplete         chan int
+	recvBlockChannel   chan int
+	validationComplete chan int
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -393,7 +393,7 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
 
-// Mine op block, validation block, or create block
+// Mine op block, or validate block by creating block
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining(pubKey ecdsa.PublicKey) {
 	// vars needed to create noop block
@@ -404,17 +404,17 @@ func startMining(pubKey ecdsa.PublicKey) {
 
 	opChannel = make(chan int, 3)
 	OpComplete = make(chan int, 3)
-	blockValidateChannel = make(chan int, 3)
-	opChannel = make(chan int, 3)
+	recvBlockChannel = make(chan int, 3)
+	validationComplete = make(chan int, 3)
 
 	for {
 	findLongestBranch:
 		select {
 		case <-opChannel:
-			<-blockOpComplete
+			<-opComplete
 			goto findLongestBranch
-		case <-blockValidateChannel:
-			<-blockValidateComplete
+		case <-recvBlockChannel:
+			<-validationComplete
 			goto findLongestBranch
 		default:
 			//TODO: Get leaf in longest chain
@@ -425,22 +425,22 @@ func startMining(pubKey ecdsa.PublicKey) {
 	Rest:
 		select {
 		case <-opChannel:
-			<-blockOpComplete
+			<-opComplete
 			goto findLongestBranch
-		case <-blockValidateChannel:
-			<-blockValidateComplete
+		case <-recvBlockChannel:
+			<-validationComplete
 			goto findLongestBranch
 		default:
-			//TODO: Find nonce and hash for the block
+			//TODO: turn pubkey into a string
 			contents := fmt.Sprintf("%s%s", prevHash, pubKey)
 			nonce, hash = getNonce(contents)
 		}
 		select {
 		case <-opChannel:
-			<-blockOpComplete
+			<-opComplete
 			goto findLongestBranch
-		case <-blockValidateChannel:
-			<-blockValidateComplete
+		case <-recvBlockChannel:
+			<-validationComplete
 			goto findLongestBranch
 		default:
 			// TODO: Create the actual block and disseminate to workers
