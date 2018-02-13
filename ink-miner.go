@@ -275,7 +275,7 @@ func ConnectServer(serverAddr string) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
 	PubKey = key.PublicKey
 	PrivKey = key
-	Ink = 0
+	Ink = 10
 	defer r.Close()
 
 	Server, err = rpc.Dial("tcp", serverAddr)
@@ -537,38 +537,16 @@ func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)
 }
 
 func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
-	fmt.Println("Something wants ink")
 	*reply = shared.Reply{InkRemaining: Ink}
 	return nil
 }
 
-// TODO
+// TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
 
-	// artNodeInfo := ArtNodeInfo{
-	// 	Transactions: []*Transaction{},
-	// 	Nonce:        "",
-	// }
-	*reply = shared.AddShapeResponse{InkRemaining: 0}
-	fmt.Println("IN INKMINER, retunring ink remaining")
+	Ink = Ink - args.InkRequired
+	*reply = shared.AddShapeResponse{InkRemaining: Ink}
 
-	// blockToCreate := BlockInfo{
-	//     Depth:
-	//     Transactions []*Transaction
-	//     PrevBlockHash string
-	//     Hash string
-	//     PubKeyMiner ecdsa.PublicKey
-	//     Nonce string
-	//     Parent *Block
-	//     Children []*Block
-	//     Ink uint32
-
-	// }
-	// send out transaction to all miners?? -> BlockInfo
-	// for now this miner just adds the block
-	// add blocks in here
-	// return hash of blocks etc so art node knows it can deaw
-	// decrease ink remaining
 	return nil
 }
 

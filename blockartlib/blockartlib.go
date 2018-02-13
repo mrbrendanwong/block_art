@@ -206,7 +206,7 @@ var (
 	BACanvas  *CanvasInstance
 )
 
-// TODO
+// TODO Calculate ink required for shape
 func getInkRequired(shape shared.Shape) uint32 {
 	return 5
 }
@@ -219,7 +219,6 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		Stroke:         stroke,
 	}
 	InkRequired := getInkRequired(*shape)
-	fmt.Println("trying to get ink")
 	InkRemaining, err := a.GetInk()
 	if err != nil {
 		return "", "", 0, err
@@ -235,11 +234,15 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 	}
 	addShapeResponse := shared.AddShapeResponse{}
 
-	a.Miner.Call("InkMiner.AddShape", addShapeInfo, &addShapeResponse)
+	Miner.Call("InkMiner.AddShape", addShapeInfo, &addShapeResponse)
 
-	fmt.Printf("IN lib, received respince, ink remaining =: %d", addShapeResponse.InkRemaining)
+	if addShapeResponse.Err != nil {
+		return "", "", 0, addShapeResponse.Err
+	}
 
-	return addShapeResponse.ShapeHash, addShapeResponse.BlockHash, addShapeResponse.InkRemaining, addShapeResponse.Err
+	fmt.Printf("InkRemaining after drawing shape:%d\n", addShapeResponse.InkRemaining)
+
+	return "", "", addShapeResponse.InkRemaining, nil
 }
 
 func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
@@ -253,7 +256,7 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 	if error != nil {
 		return 0, DisconnectedError("Could not get ink")
 	}
-	fmt.Printf("Ink from ink-miner:%d", reply.InkRemaining)
+	fmt.Printf("Ink from ink-miner:%d\n", reply.InkRemaining)
 
 	return reply.InkRemaining, nil
 }

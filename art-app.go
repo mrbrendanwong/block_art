@@ -26,7 +26,7 @@ func main() {
 	gob.Register(&net.TCPAddr{})
 	gob.Register(&elliptic.CurveParams{})
 
-	minerAddr := "128.189.222.155:64953"
+	minerAddr := "192.168.1.200:50692"
 	r, err := os.Open("/dev/urandom")
 	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
 	privKey := key
