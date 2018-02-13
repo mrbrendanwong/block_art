@@ -49,8 +49,9 @@ var (
 
 	// Channel to signal incoming ops, blocks
 	//TODO
-	opChannel       chan int // int is a placeholder -> may be an op string later
-	blockOpComplete chan int
+	opChannel            chan int // int is a placeholder -> may be an op string later
+	blockOpComplete      chan int
+	blockValidateChannel chan int
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -193,7 +194,7 @@ func ConnectServer(serverAddr string) {
 	go sendHeartBeats()
 
 	// start mining noop blocks
-	go startMining()
+	go startMining(Pubkey)
 
 	// Get nodes from server and attempt to connect to them
 	GetNodes()
@@ -392,13 +393,18 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
 
-// Begin mining of blocks
-// When signal is received, immediately work on op blocks
-// TODO: When miner receives a block, it needs to validate the block before adding it its own chain
-// A
-func startMining() {
-	var nonce, hash string
+// Mine op block, validation block, or create block
+// hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
+func startMining(pubKey ecdsa.PublicKey) {
+	// vars needed to create noop block
+	var depth, ink uint32
+	var prevBlockHash, nonce, hash string
+	var pubKey ecdsa.PublicKey
+	var parent *Block
 
+	opChannel = make(chan int, 3)
+	OpComplete = make(chan int, 3)
+	blockValidateChannel = make(chan int, 3)
 	opChannel = make(chan int, 3)
 
 	for {
@@ -407,8 +413,13 @@ func startMining() {
 		case <-opChannel:
 			<-blockOpComplete
 			goto findLongestBranch
+		case <-blockValidateChannel:
+			<-blockValidateComplete
+			goto findLongestBranch
 		default:
 			//TODO: Get leaf in longest chain
+			//TODO: Set the variables above
+			leaf = getLongestChain()
 			log.Println("DO SOME WORK")
 		}
 	Rest:
@@ -416,27 +427,26 @@ func startMining() {
 		case <-opChannel:
 			<-blockOpComplete
 			goto findLongestBranch
+		case <-blockValidateChannel:
+			<-blockValidateComplete
+			goto findLongestBranch
 		default:
 			//TODO: Find nonce and hash for the block
-			nonce, hash = getNonce( /*the hash of the block + miner publickey*/ )
+			contents := fmt.Sprintf("%s%s", prevHash, pubKey)
+			nonce, hash = getNonce(contents)
 		}
-
 		select {
 		case <-opChannel:
 			<-blockOpComplete
+			goto findLongestBranch
+		case <-blockValidateChannel:
+			<-blockValidateComplete
 			goto findLongestBranch
 		default:
 			// TODO: Create the actual block and disseminate to workers
 			// TODO: Add amount of noop ink to miner
 		}
 	}
-}
-
-//TODO:
-//TODO: Depends on the RPC call from the art node
-// Create block and disseminate to other miners
-func mineOpBlock( /* args of op */ ) {
-
 }
 
 // Return nonce with required 0s
