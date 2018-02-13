@@ -199,13 +199,13 @@ type Canvas interface {
 type ArtNode struct{
 	minerAddr 	string
 	Miner       *rpc.Client
+	connected 	bool
 }
 
 type CanvasInstance struct{
 	sync.RWMutex
-	canvas 	[][]bool
-	file 	*os.File
-
+	canvas 		[][]bool
+	file 		*os.File
 }
 
 type Coordinates struct {
@@ -216,30 +216,49 @@ type Coordinates struct {
 var(
 	initiated 		bool
 	BACanvas		*CanvasInstance
-
+	Settings		CanvasSettings
 )
 
 func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
+	// INK REQUIRED :
+	// transparent fill, non-transparent stroke			length
+	// non-transparent fill, transparent stroke  		area
+	// non-transparent fill, non-transparent stroke		length + area
+
+	// Return DisconnectedError if art node no longer connected to canvas
+	if !a.connected {
+		return "", "", 0, DisconnectedError("")
+	}
+
+	// Return StringTooLongError if string longer than 128 bytes
 	if len(shapeSvgString) > SVGSTRING_MAXLEN {
 		return "", "", 0, ShapeSvgStringTooLongError("")
 	}
+
+	// Get vertices of shape, return OutOfBounds if vertex out of bounds
 	vertices, err := getVertices(shapeSvgString)
+	if err != nil{
+		return "", "", 0, err
+	}
 
 	// Check that shape does not overlap any existing shape
-	isValid := isValidShape(vertices, fill != "transparent")
+	isValid := isValidShape(vertices, fill != "transparent", stroke != "transparent")
 	if !isValid{
 		return "", "", 0, InvalidShapeSvgStringError("")
 	}
 
-	ink := getAmountInk(vertices, fill != "transparent")
+	ink := getAmountInk(vertices, fill != "transparent", stroke != "transparent")
 	if err != nil {
 		return "", "", 0, err
 	}
 	fmt.Println("Ink needed: ", ink)
 
 	// Ask miner if has enough ink
-
-
+	//enoughInk :=
+	enoughInk := true
+	if !enoughInk{
+		return "", "", 0, InsufficientInkError(0);
+	}
 
 	// Draw to board
 	drawShape(shapeSvgString, fill, stroke)
@@ -272,11 +291,11 @@ func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error)
 }
 
 func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
-	fmt.Println("Closing canvas..")
+	if !a.connected {
+		return 0, DisconnectedError("")
+	}
 	// TODO:
 	// Get inkRemaining from miner
-
-	// Unmount art ngitode from miner
 
 	// TODO:
 	// only close if last connected miner
@@ -284,17 +303,16 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 
 	// Close connection to miner
 	a.Miner.Close()
+	a.connected = false						// Mark as no longer connected
 
 	return 0, nil 			// Return no ink remaining for now
 }
 
 // This function returns the list of vertices contained in the SVG string
 func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
-	// L/l : draw a line from current point to point given
-	// H/h : draw horizontal line from current point
-	// V/v : draw vertical line from current point
-	// Z : path back to starting point
+	// https://www.w3.org/TR/SVG2/paths.html
 	// ex. M 0 0 L 0 5
+
 	points := []Coordinates{}
 	r, err := regexp.Compile(`[MmHhVvLlZz][ \-0-9]*`)
 	if err != nil {
@@ -359,40 +377,51 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 			x_current = x_start
 			y_current = y_start
 		}
+
+		// Check that vertices are not out of bounds
+		if x_current < 0 || x_current > float64(Settings.CanvasXMax){
+			return nil, OutOfBoundsError{}
+		}
+		if y_current < 0 || y_current > float64(Settings.CanvasYMax){
+			return nil, OutOfBoundsError{}
+		}
 		points = append(points, Coordinates{int(x_current), int(y_current)})
 	}
 	return points, nil
 }
 
 // This function returns the amount of ink necessary to draw given shape
-func getAmountInk(points []Coordinates, fill bool)(inkNeeded float64) {
-	// Find Perimeter
-	var area float64 = 0
+func getAmountInk(points []Coordinates, fill bool, stroke bool)(inkNeeded float64) {
 	var ink float64 = 0
 	j:= 0
-	if !fill{
+	if stroke {
+		// Find parameter
 		for j < len(points) - 1 {
 			x_dist := math.Abs(float64(points[j + 1].x - points[j].x))
 			y_dist := math.Abs(float64(points[j+1].y - points[j].y))
 			ink = ink + math.Sqrt(math.Pow(x_dist, 2) + math.Pow(y_dist, 2))
 			j++
 		}
-		return ink
 	}
 
-	// Find Area
-	// https://www.mathopenref.com/coordpolygonarea.html
-	for j < len(points) - 1{
-		area = area + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
-		j++
+	if fill {
+		// Find Area
+		// https://www.mathopenref.com/coordpolygonarea.html
+		for j < len(points) - 1{
+			ink = ink + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
+			j++
+		}
+		ink = ink / 2
 	}
-	area = area / 2
-	return area
+
+
+	return ink
 }
 
 // This function checks that the given shape does not overlap any existing shapes
-func isValidShape(points []Coordinates, fill bool)(valid bool){
+func isValidShape(points []Coordinates, fill bool, stroke bool)(valid bool){
 	// TODO:
+	// NO SUCH THING AS AN OVERLAP FOR NOW
 	return true
 }
 
@@ -423,7 +452,7 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	}
 
 	// Create art node
-	canvas = &ArtNode{minerAddr, miner}
+	canvas = &ArtNode{minerAddr, miner, true}
 
 	// Register art node on miner
 	// Get CanvasSettings from miner
@@ -433,6 +462,7 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 		// Public Key does not match
 		return nil, CanvasSettings{}, err
 	}
+	Settings = settings
 
 	// create canvas if not yet created
 	if !initiated {
