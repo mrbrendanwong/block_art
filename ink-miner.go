@@ -12,6 +12,7 @@ import (
 	"crypto/md5"
 	"encoding/gob"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -19,8 +20,6 @@ import (
 	"net/rpc"
 	"os"
 	"strings"
-	//	"strings"
-	"errors"
 	"sync"
 	"time"
 
