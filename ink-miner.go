@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/md5"
+	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
@@ -49,6 +50,12 @@ var (
 
 	// Connected mineres
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
+
+	// Channel to signal incoming ops, blocks
+	opChannel          chan int // int is a placeholder -> may be an op string later
+	opComplete         chan int
+	recvBlockChannel   chan int
+	validationComplete chan int
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -287,17 +294,32 @@ func ConnectServer(serverAddr string) {
 	outLog.Println("Successfully connected")
 
 	// Register miner on server
-	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &Settings)
+	var settings MinerNetSettings
+	minerInfo := MinerInfo{LocalAddr, PubKey}
+	err = Server.Call("RServer.Register", minerInfo, &settings)
 	if err != nil {
 		outLog.Println(err)
 		return
 	}
 
-	// start sending heartbeats
+	// Store miner settings from sever
+	Settings = settings
+
+	// Start sending heartbeats
 	go sendHeartBeats()
 
+	// start mining noop blocks
+	go startMining()
+
 	// Get nodes from server and attempt to connect to them
-	GetNodes()
+	err = GetNodes()
+	if err != nil {
+		outLog.Println("Error getting nodes from server: ", err)
+		return
+	}
+
+	// Monitor the miner threshold
+	go monitorThreshold()
 
 	// TODO:
 	// Listen for incoming miner connections
@@ -325,7 +347,6 @@ func sendHeartBeats() (err error) {
 		time.Sleep(time.Millisecond * 5)
 
 	}
-	return nil
 }
 
 /* Retrieves a list of new miner addresses from the server
@@ -362,6 +383,40 @@ func GetNodes() (err error) {
 	outLog.Printf("Connected to %d new ink miners\n", newMiners)
 
 	return nil
+}
+
+/* Monitors the current number of miners connected to this miner
+ * If the number of miners is below the minimum, we will keep pinging the server
+ * until we have the required number of miners to keep working
+ *
+ * TODO: This will need to be extended to stop/pause mining and other activities
+ *       whenever we fall below the min threshold
+ */
+func monitorThreshold() {
+	for {
+		connectedMiners.Lock()
+		numConnectedMiners := len(connectedMiners.miners)
+		connectedMiners.Unlock()
+		threshold := int(Settings.MinNumMinerConnections)
+
+
+		if numConnectedMiners < threshold {
+			outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
+			outLog.Printf("Threshold: %d\n", threshold)
+			outLog.Println("We are below the minimum miner threshold!")
+
+			err := GetNodes()
+			if err != nil {
+				outLog.Println("Error getting nodes from server: ", err)
+			}
+
+		} else {
+			continue
+		}
+
+		// Wait before checking again
+		time.Sleep(2 * time.Second)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -459,7 +514,6 @@ func sendMinerHeartbeat(minerConn *rpc.Client) (err error) {
 		}
 		time.Sleep(time.Millisecond * 5)
 	}
-	return nil
 }
 
 // Updates heartbeats for miners. Adapted from server.go
@@ -494,6 +548,70 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
+
+// Return string version of public key
+func pubKeyToString(pubKey ecdsa.PublicKey) string {
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pubKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+	return encodedBytes
+}
+
+// Mine op block, or validate block by creating block
+// hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
+func startMining() {
+	// vars needed to create noop block
+	var depth, ink uint32
+	var prevBlockHash, nonce, hash string
+	var parent *Block
+
+	// Channels
+	opChannel = make(chan int, 3)
+	OpComplete = make(chan int, 3)
+	recvBlockChannel = make(chan int, 3)
+	validationComplete = make(chan int, 3)
+
+	for {
+	findLongestBranch:
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			//TODO: Get leaf in longest chain
+			//TODO: Set the variables above
+			log.Println("DO SOME WORK")
+		}
+	Rest:
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			// Get the value of new hash block and nonce
+			pkeyString = pubKeyToString(PubKey)
+			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
+			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
+		}
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			// TODO: Create the actual block and disseminate as json encoded string to workers
+			// TODO: Add amount of noop ink to miner
+		}
+	}
+}
+
 // Return nonce and hash made with nonce that has required 0s
 func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
