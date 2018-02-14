@@ -4,7 +4,7 @@ A trivial application to illustrate how the blockartlib library can be
 used from an application in project 1 for UBC CS 416 2017W2.
 
 Usage:
-go run art-app.go
+go run art-app.go ip:port
 */
 
 package main
@@ -26,7 +26,11 @@ func main() {
 	gob.Register(&net.TCPAddr{})
 	gob.Register(&elliptic.CurveParams{})
 
-	minerAddr := "192.168.1.200:50692"
+	if len(os.Args) != 2 {
+		fmt.Println("Usage: ", os.Args[0], "server")
+		os.Exit(1)
+	}
+	minerAddr := os.Args[1]
 	r, err := os.Open("/dev/urandom")
 	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
 	privKey := key
