@@ -10,6 +10,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/md5"
+	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
 	"fmt"
@@ -49,6 +50,12 @@ var (
 
 	// Connected mineres
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
+
+	// Channel to signal incoming ops, blocks
+	opChannel          chan int // int is a placeholder -> may be an op string later
+	opComplete         chan int
+	recvBlockChannel   chan int
+	validationComplete chan int
 )
 
 var letters = []byte("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ")
@@ -288,7 +295,8 @@ func ConnectServer(serverAddr string) {
 
 	// Register miner on server
 	var settings MinerNetSettings
-	err = Server.Call("RServer.Register", MinerInfo{LocalAddr, PubKey}, &settings)
+	minerInfo := MinerInfo{LocalAddr, PubKey}
+	err = Server.Call("RServer.Register", minerInfo, &settings)
 	if err != nil {
 		outLog.Println(err)
 		return
@@ -299,6 +307,9 @@ func ConnectServer(serverAddr string) {
 
 	// Start sending heartbeats
 	go sendHeartBeats()
+
+	// start mining noop blocks
+	go startMining()
 
 	// Get nodes from server and attempt to connect to them
 	err = GetNodes()
@@ -336,7 +347,6 @@ func sendHeartBeats() (err error) {
 		time.Sleep(time.Millisecond * 5)
 
 	}
-	return nil
 }
 
 /* Retrieves a list of new miner addresses from the server
@@ -504,7 +514,6 @@ func sendMinerHeartbeat(minerConn *rpc.Client) (err error) {
 		}
 		time.Sleep(time.Millisecond * 5)
 	}
-	return nil
 }
 
 // Updates heartbeats for miners. Adapted from server.go
@@ -539,6 +548,70 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
+
+// Return string version of public key
+func pubKeyToString(pubKey ecdsa.PublicKey) string {
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pubKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+	return encodedBytes
+}
+
+// Mine op block, or validate block by creating block
+// hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
+func startMining() {
+	// vars needed to create noop block
+	var depth, ink uint32
+	var prevBlockHash, nonce, hash string
+	var parent *Block
+
+	// Channels
+	opChannel = make(chan int, 3)
+	OpComplete = make(chan int, 3)
+	recvBlockChannel = make(chan int, 3)
+	validationComplete = make(chan int, 3)
+
+	for {
+	findLongestBranch:
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			//TODO: Get leaf in longest chain
+			//TODO: Set the variables above
+			log.Println("DO SOME WORK")
+		}
+	Rest:
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			// Get the value of new hash block and nonce
+			pkeyString = pubKeyToString(PubKey)
+			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
+			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
+		}
+		select {
+		case <-opChannel:
+			<-opComplete
+			goto findLongestBranch
+		case <-recvBlockChannel:
+			<-validationComplete
+			goto findLongestBranch
+		default:
+			// TODO: Create the actual block and disseminate as json encoded string to workers
+			// TODO: Add amount of noop ink to miner
+		}
+	}
+}
+
 // Return nonce and hash made with nonce that has required 0s
 func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
