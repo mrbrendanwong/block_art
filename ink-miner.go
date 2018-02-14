@@ -306,7 +306,7 @@ func ConnectServer(serverAddr string) {
 	go sendHeartBeats()
 
 	// start mining noop blocks
-	go startMining(minerInfo, &settings)
+	go startMining()
 
 	// Get nodes from server and attempt to connect to them
 	GetNodes()
@@ -514,7 +514,7 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 
 // Mine op block, or validate block by creating block
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
-func startMining(minerInfo *MinerInfo, settings *MinerNetSettings) {
+func startMining() {
 	// vars needed to create noop block
 	var depth, ink uint32
 	var prevBlockHash, nonce, hash string
@@ -550,9 +550,9 @@ func startMining(minerInfo *MinerInfo, settings *MinerNetSettings) {
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
-			pkeyString = pubKeyToString(minerInfo.Key)
+			pkeyString = pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
-			nonce, hash = getNonce(contents, settings.PoWDifficultyNoOpBlock)
+			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
 		select {
 		case <-opChannel:
@@ -562,7 +562,7 @@ func startMining(minerInfo *MinerInfo, settings *MinerNetSettings) {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			// TODO: Create the actual block and disseminate to workers
+			// TODO: Create the actual block and disseminate as json encoded string to workers
 			// TODO: Add amount of noop ink to miner
 		}
 	}
