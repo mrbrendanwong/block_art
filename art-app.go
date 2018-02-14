@@ -4,44 +4,60 @@ A trivial application to illustrate how the blockartlib library can be
 used from an application in project 1 for UBC CS 416 2017W2.
 
 Usage:
-go run art-app.go
+go run art-app.go ip:port
 */
 
 package main
 
 // Expects blockartlib.go to be in the ./blockartlib/ dir, relative to
 // this art-app.go file
-import "./blockartlib"
+import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"encoding/gob"
+	"fmt"
+	"net"
+	"os"
 
-import "fmt"
-import "os"
+	"./blockartlib"
+)
 
 func main() {
-	minerAddr := "127.0.0.1:8080"
-	privKey := // TODO: use crypto/ecdsa to read pub/priv keys from a file argument.
+	gob.Register(&net.TCPAddr{})
+	gob.Register(&elliptic.CurveParams{})
+
+	if len(os.Args) != 2 {
+		fmt.Println("Usage: ", os.Args[0], "server")
+		os.Exit(1)
+	}
+	minerAddr := os.Args[1]
+	r, err := os.Open("/dev/urandom")
+	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
+	privKey := key
+	//privKey := // TODO: use crypto/ecdsa to read pub/priv keys from a file argument.
 
 	// Open a canvas.
-	canvas, settings, err := blockartlib.OpenCanvas(minerAddr, privKey)
+	canvas, _, err := blockartlib.OpenCanvas(minerAddr, *privKey)
 	if checkError(err) != nil {
 		return
 	}
 
-    validateNum := 2
+	validateNum := uint8(2)
 
 	// Add a line.
-	shapeHash, blockHash, ink, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 0 5", "transparent", "red")
+	shapeHash, _, _, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 0 5", "transparent", "red")
 	if checkError(err) != nil {
 		return
 	}
 
 	// Add another line.
-	shapeHash2, blockHash2, ink2, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 5 0", "transparent", "blue")
+	_, _, _, err = canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 5 0", "transparent", "blue")
 	if checkError(err) != nil {
 		return
 	}
 
 	// Delete the first line.
-	ink3, err := canvas.DeleteShape(validateNum, shapeHash)
+	_, err = canvas.DeleteShape(validateNum, shapeHash)
 	if checkError(err) != nil {
 		return
 	}
@@ -49,7 +65,7 @@ func main() {
 	// assert ink3 > ink2
 
 	// Close the canvas.
-	ink4, err := canvas.CloseCanvas()
+	_, err = canvas.CloseCanvas()
 	if checkError(err) != nil {
 		return
 	}
