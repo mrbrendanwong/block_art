@@ -13,7 +13,6 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -23,6 +22,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"./shared"
 
 	"./blockartlib"
 )
@@ -35,12 +36,14 @@ import (
 type InkMiner int
 
 var (
+	config Config
 	// Identity related variables
 	Server    *rpc.Client     /* Connection to Server */
 	PubKey    ecdsa.PublicKey /* Public and private key pair for validation */
 	PrivKey   *ecdsa.PrivateKey
 	LocalAddr net.Addr
 	Settings  MinerNetSettings
+	Ink       uint32
 	// Error logging
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
@@ -112,6 +115,48 @@ type MinerNetSettings struct {
 	CanvasSettings CanvasSettings `json:"canvas-settings"`
 }
 
+type Config struct {
+	GenesisBlockHash string `json:"genesis-block-hash"`
+}
+
+//TODO FIX TYPES
+
+type Transaction struct {
+	// ShapeOp is an application shape operation
+	ShapeOp string
+	// ShapeOpSig is the signature of the shape operation generated using the private key and the operation
+	ShapeOpSig string
+	// PubKeyArtNode is the public key of the artnode that generated the op
+	PubKeyArtNode string
+}
+
+// Block represents a block in the blockchain, contains transactions and metadata
+type Block struct {
+	// Depth is the position of the block within the blockchain
+	Depth uint32
+	// Transactions are the list of transactions the block performs
+	Transactions []*Transaction
+	// PrevBlockHash is the hash of the previous block
+	PrevBlockHash string
+	// Hash is the hash of the current block
+	Hash string
+	// PubKeyMiner is the public key of the miner that computed this block
+	PubKeyMiner ecdsa.PublicKey
+	// Nonce is a 32-bit unsigned integer nonce
+	Nonce string
+	// Parent is pointer to parent block
+	Parent *Block
+	// Children is array of pointers to children of block
+	Children []*Block
+	// Ink is the amount of ink the miner associated with pubkeyminer has
+	Ink uint32
+}
+
+// Blockchain represents the blockchain, contains an array of Blocks
+type Blockchain struct {
+	blocks []*Block
+}
+
 // Represents a miner. Adapted from server.go
 type Miner struct {
 	Address         net.Addr
@@ -141,6 +186,70 @@ func handleErrorFatal(msg string, e error) {
 		errLog.Fatalf("%s, err = %s\n", msg, e.Error())
 	}
 }
+
+type ArtNodeInfo struct {
+	Transactions []*Transaction
+	PubKeyMiner  ecdsa.PublicKey
+	Nonce        string
+	Ink          uint32
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// BLOCK FUNCTIONS
+////////////////////////////////////////////////////////////////////////////////
+
+// // Create a new block
+// func NewBlock(depth uint32, transactions string, prevBlockHash string) *Block {
+//     block := &Block{
+//         Depth: depth,
+//         Parent:
+//         Children: []*Block,
+//         PubKeyMiner:
+//         Ink:
+//         Transactions: []byte(transactions),
+//         PrevBlockHash: prevBlockHash,
+//         Hash: []byte{},
+//     }
+//     block.SetHash()
+//     return block
+// }
+
+// // NewGenesisBlock creates and returns genesis Block
+// func NewGenesisBlock() *Block {
+//     block := &Block{
+//         Hash: config.GenesisBlockHash,
+//         Children: []*Block,
+//         Ink: 0,
+//         Depth: 0,
+//         PrevBlockHash: ""
+//     }
+//     return block
+// }
+
+func ValidateBlock() bool {
+	return false
+}
+
+func ValidateOperation() bool {
+	return false
+}
+
+////////////////////////////////////////////////////////////////////////////////
+// BLOCKCHAIN FUNCTIONS
+////////////////////////////////////////////////////////////////////////////////
+
+// AddBlock saves provided data as a block in the blockchain
+// func (bc *Blockchain) AddBlock(data string) {
+//     // ValidateBlock
+//     prevBlock := bc.blocks[len(bc.blocks)-1]
+//     newBlock := NewBlock(prevBlock,  data, prevBlock.Hash)
+//     bc.blocks = append(bc.blocks, newBlock)
+// }
+
+// NewBlockchain creates a new Blockchain with genesis Block
+// func NewBlockchain() *Blockchain {
+//     return &Blockchain{[]*Block{NewGenesisBlock()}}
+// }
 
 ////////////////////////////////////////////////////////////////////////////////
 // MINER - SERVER
@@ -173,6 +282,7 @@ func ConnectServer(serverAddr string) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
 	PubKey = key.PublicKey
 	PrivKey = key
+	Ink = 10
 	defer r.Close()
 
 	Server, err = rpc.Dial("tcp", serverAddr)
@@ -486,14 +596,29 @@ func computeNonceSecretHash(nonce string, secret string) string {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
-// MINER - ARTIST
+// MINER - ARTIST NODE
 ////////////////////////////////////////////////////////////////////////////////
 // Check that key of incoming art node matches key of miner.
 func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings) (err error) {
-	if PubKey != Key {
-		return errors.New("Mismatch between Public Keys")
-	}
+	// Commented out for now because test app generates its own key
+	// if PubKey != Key {
+	// 	return errors.New("Mismatch between Public Keys")
+	// }
 	*settings = Settings.CanvasSettings
+	return nil
+}
+
+func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
+	*reply = shared.Reply{InkRemaining: Ink}
+	return nil
+}
+
+// TODO ADD TO BLOCKCHAIN
+func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
+
+	Ink = Ink - args.InkRequired
+	*reply = shared.AddShapeResponse{InkRemaining: Ink}
+
 	return nil
 }
 
