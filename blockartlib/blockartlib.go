@@ -8,6 +8,7 @@ library (blockartlib) to be used in project 1 of UBC CS 416 2017W2.
 package blockartlib
 
 import "crypto/ecdsa"
+import "../shared"
 import (
 	"fmt"
 	"net/rpc"
@@ -20,15 +21,17 @@ import (
 	"time"
 )
 
-// Represents a type of shape in the BlockArt system.
-type ShapeType int
-
 const (
 	// Path shape.
-	PATH ShapeType = iota
+	PATH shared.ShapeType = iota
 
 	// Circle shape (extra credit).
 	// CIRCLE
+)
+
+var (
+	Miner     *rpc.Client
+	minerAddr string
 )
 
 const SVGSTRING_MAXLEN = 128
@@ -155,7 +158,7 @@ type Canvas interface {
 	// - ShapeSvgStringTooLongError
 	// - ShapeOverlapError
 	// - OutOfBoundsError
-	AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error)
+	AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error)
 
 	// Returns the encoding of the shape as an svg string.
 	// Can return the following errors:
@@ -213,19 +216,18 @@ type Coordinates struct {
 	y int
 }
 
-var(
-	initiated 		bool
-	BACanvas		*CanvasInstance
-	Settings		CanvasSettings
+var (
+	initiated bool
+	BACanvas  *CanvasInstance
+	Settings  CanvasSettings
 )
 
-func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
-	// INK REQUIRED :
-	// transparent fill, non-transparent stroke			length
-	// non-transparent fill, transparent stroke  		area
-	// non-transparent fill, non-transparent stroke		length + area
+// TODO Calculate ink required for shape
+func getInkRequired(shape shared.Shape) uint32 {
+	return 5
+}
 
-	// Return DisconnectedError if art node no longer connected to canvas
+func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
 	if !a.connected {
 		return "", "", 0, DisconnectedError("")
 	}
@@ -247,46 +249,69 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType ShapeType, shapeSvgString
 		return "", "", 0, InvalidShapeSvgStringError("")
 	}
 
-	ink := getAmountInk(vertices, fill != "transparent", stroke != "transparent")
+	shape := &shared.Shape{
+		ShapeType:      shapeType,
+		ShapeSvgString: shapeSvgString,
+		Fill:           fill,
+		Stroke:         stroke,
+	}
+	InkRequired := getInkRequired(*shape)
+	InkRemaining, err := a.GetInk()
 	if err != nil {
 		return "", "", 0, err
 	}
-	fmt.Println("Ink needed: ", ink)
-
-	// Ask miner if has enough ink
-	//enoughInk :=
-	enoughInk := true
-	if !enoughInk{
-		return "", "", 0, InsufficientInkError(0);
+	if InkRequired > InkRemaining {
+		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-	// Draw to board
-	drawShape(shapeSvgString, fill, stroke)
-	return "", "", 0, nil
+	addShapeInfo := &shared.AddShapeInfo{
+		ValidateNum: validateNum,
+		InkRequired: InkRequired,
+		Shape:       *shape,
+	}
+	addShapeResponse := shared.AddShapeResponse{}
+
+	Miner.Call("InkMiner.AddShape", addShapeInfo, &addShapeResponse)
+
+	if addShapeResponse.Err != nil {
+		return "", "", 0, addShapeResponse.Err
+	}
+
+	fmt.Printf("InkRemaining after drawing shape:%d\n", addShapeResponse.InkRemaining)
+	//	drawShape(shapeSvgString, fill, stroke)
+
+	return "", "", addShapeResponse.InkRemaining, nil
 }
 
-func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error){
+func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 	return "", nil
 }
 
-func (a ArtNode) GetInk() (inkRemaining uint32, err error){
+func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
+
+	reply := shared.Reply{}
+	error := Miner.Call("InkMiner.GetInk", reply, &reply)
+	if error != nil {
+		return 0, DisconnectedError("Could not get ink")
+	}
+	fmt.Printf("Ink from ink-miner:%d\n", reply.InkRemaining)
+
+	return reply.InkRemaining, nil
+}
+
+func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
 	return 0, nil
 }
 
-func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error){
-	return 0, nil
-}
-
-func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error){
+func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
 	return nil, nil
 }
 
-
-func (a ArtNode) GetGenesisBlock() (blockHash string, err error){
+func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 	return "", nil
 }
 
-func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error){
+func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error) {
 	return nil, nil
 }
 
@@ -305,7 +330,7 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 	a.Miner.Close()
 	a.connected = false						// Mark as no longer connected
 
-	return 0, nil 			// Return no ink remaining for now
+	return 0, nil // Return no ink remaining for now
 }
 
 // This function returns the list of vertices contained in the SVG string
@@ -447,8 +472,8 @@ func drawShape(shapeSvgString string, fill string, stroke string){
 func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, setting CanvasSettings, err error) {
 	// Connect art node to miner
 	miner, err := rpc.Dial("tcp", minerAddr)
-	if err != nil{
-		return nil, CanvasSettings{}, DisconnectedError("")
+	if err != nil {
+		return nil, CanvasSettings{}, DisconnectedError("Could not open Canvas")
 	}
 
 	// Create art node
@@ -457,8 +482,8 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	// Register art node on miner
 	// Get CanvasSettings from miner
 	var settings CanvasSettings
-	err = miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
-	if err != nil{
+	err = Miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
+	if err != nil {
 		// Public Key does not match
 		return nil, CanvasSettings{}, err
 	}
@@ -474,7 +499,7 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 
 func createCanvas(x int, y int){
 	grid := make([][]bool, y)
-	for i:= 0 ; i < y ; i++{
+	for i := 0; i < y; i++ {
 		grid[i] = make([]bool, x)
 	}
 
