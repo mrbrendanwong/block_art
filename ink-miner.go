@@ -495,11 +495,10 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
-// Return nonce and hash with required 0s
-func getNonce(hash string, difficulty int64) (string, string) {
+// Return nonce and hash made with nonce that has required 0s
+func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
-	//var secretMsg string
 
 	for {
 		randNum := rand.Intn(23)
@@ -508,12 +507,12 @@ func getNonce(hash string, difficulty int64) (string, string) {
 			secret[i] = letters[rand.Intn(len(letters))]
 		}
 
-		h = computeNonceSecretHash(hash, string(secret))
-		if strings.HasSuffix(hash, wantedString) {
+		h = computeNonceSecretHash(blockHash, string(secret))
+
+		if strings.HasSuffix(h, wantedString) {
 			return string(secret), h
 		}
 	}
-	return "", h
 }
 
 // Helper: Returns MD5 hash of given hash + secret
