@@ -568,8 +568,8 @@ func startMining(minerInfo *MinerInfo, settings *MinerNetSettings) {
 	}
 }
 
-// Return nonce and hash with required 0s
-func getNonce(hash string, difficulty int64) (string, string) {
+// Return nonce and hash made with nonce that has required 0s
+func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
 
@@ -580,8 +580,9 @@ func getNonce(hash string, difficulty int64) (string, string) {
 			secret[i] = letters[rand.Intn(len(letters))]
 		}
 
-		h = computeNonceSecretHash(hash, string(secret))
-		if strings.HasSuffix(hash, wantedString) {
+		h = computeNonceSecretHash(blockHash, string(secret))
+
+		if strings.HasSuffix(h, wantedString) {
 			return string(secret), h
 		}
 	}
