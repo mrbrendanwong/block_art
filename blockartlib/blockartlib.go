@@ -222,9 +222,38 @@ var (
 	Settings  CanvasSettings
 )
 
-// TODO Calculate ink required for shape
-func getInkRequired(shape shared.Shape) uint32 {
-	return 5
+// This function determines how much ink is needed to draw given shape
+func getInkRequired(shape shared.Shape) (inkNeeded uint32, err error) {
+
+	points, err := getVertices(shape.ShapeSvgString)
+	if err != nil{
+		// Out of bounds
+		return 0, OutOfBoundsError{}
+	}
+	var ink float64 = 0
+	j:= 0
+	if shape.Stroke != "transparent" {
+		// Find parameter
+		for j < len(points) - 1 {
+			x_dist := math.Abs(float64(points[j + 1].x - points[j].x))
+			y_dist := math.Abs(float64(points[j+1].y - points[j].y))
+			ink = ink + math.Sqrt(math.Pow(x_dist, 2) + math.Pow(y_dist, 2))
+			j++
+		}
+	}
+
+	if shape.Fill != "transparent" {
+		// Find Area
+		// https://www.mathopenref.com/coordpolygonarea.html
+		for j < len(points) - 1{
+			ink = ink + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
+			j++
+		}
+		ink = ink / 2
+	}
+
+
+	return uint32(ink), nil
 }
 
 func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSvgString string, fill string, stroke string) (shapeHash string, blockHash string, inkRemaining uint32, err error) {
@@ -237,31 +266,29 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, ShapeSvgStringTooLongError("")
 	}
 
-	// Get vertices of shape, return OutOfBounds if vertex out of bounds
-	vertices, err := getVertices(shapeSvgString)
-	if err != nil{
-		return "", "", 0, err
-	}
-
-	// Check that shape does not overlap any existing shape
-	isValid := isValidShape(vertices, fill != "transparent", stroke != "transparent")
-	if !isValid{
-		return "", "", 0, InvalidShapeSvgStringError("")
-	}
-
 	shape := &shared.Shape{
 		ShapeType:      shapeType,
 		ShapeSvgString: shapeSvgString,
 		Fill:           fill,
 		Stroke:         stroke,
 	}
-	InkRequired := getInkRequired(*shape)
-	InkRemaining, err := a.GetInk()
+
+	InkRequired, err := getInkRequired(*shape)
 	if err != nil {
+		fmt.Println("Error getting ink required.")
 		return "", "", 0, err
 	}
+	InkRemaining, err := a.GetInk()
+
 	if InkRequired > InkRemaining {
 		return "", "", 0, InsufficientInkError(InkRequired)
+	}
+
+
+	// Check that shape does not overlap any existing shape
+	isValid := isValidShape(*shape)
+	if !isValid{
+		return "", "", 0, InvalidShapeSvgStringError("")
 	}
 
 	addShapeInfo := &shared.AddShapeInfo{
@@ -277,8 +304,9 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, addShapeResponse.Err
 	}
 
+	drawShape(shapeSvgString, fill, stroke) // draw onto HTML file
+
 	fmt.Printf("InkRemaining after drawing shape:%d\n", addShapeResponse.InkRemaining)
-	//	drawShape(shapeSvgString, fill, stroke)
 
 	return "", "", addShapeResponse.InkRemaining, nil
 }
@@ -341,7 +369,7 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 	points := []Coordinates{}
 	r, err := regexp.Compile(`[MmHhVvLlZz][ \-0-9]*`)
 	if err != nil {
-		fmt.Println(err)
+		fmt.Println("Error getting vertices.",err)
 		return nil, err
 	}
 	res := r.FindAllString(shapeSVGString, -1)
@@ -415,36 +443,8 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 	return points, nil
 }
 
-// This function returns the amount of ink necessary to draw given shape
-func getAmountInk(points []Coordinates, fill bool, stroke bool)(inkNeeded float64) {
-	var ink float64 = 0
-	j:= 0
-	if stroke {
-		// Find parameter
-		for j < len(points) - 1 {
-			x_dist := math.Abs(float64(points[j + 1].x - points[j].x))
-			y_dist := math.Abs(float64(points[j+1].y - points[j].y))
-			ink = ink + math.Sqrt(math.Pow(x_dist, 2) + math.Pow(y_dist, 2))
-			j++
-		}
-	}
-
-	if fill {
-		// Find Area
-		// https://www.mathopenref.com/coordpolygonarea.html
-		for j < len(points) - 1{
-			ink = ink + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
-			j++
-		}
-		ink = ink / 2
-	}
-
-
-	return ink
-}
-
 // This function checks that the given shape does not overlap any existing shapes
-func isValidShape(points []Coordinates, fill bool, stroke bool)(valid bool){
+func isValidShape(shape shared.Shape)(valid bool){
 	// TODO:
 	// NO SUCH THING AS AN OVERLAP FOR NOW
 	return true
@@ -478,7 +478,7 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 
 	// Create art node
 	canvas = &ArtNode{minerAddr, miner, true}
-
+	Miner = miner
 	// Register art node on miner
 	// Get CanvasSettings from miner
 	var settings CanvasSettings
