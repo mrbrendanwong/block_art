@@ -793,6 +793,31 @@ func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
 	return nil
 }
 
+// Return genesis block to art node
+func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error){
+	*hash = Settings.GenesisBlockHash
+	return nil
+}
+
+func (m InkMiner) GetShape(shapeHash string, shape *shared.Shape) (err error){
+	fmt.Println(BlockchainRef)
+	for i := range BlockchainRef.Blocks {
+		ops := BlockchainRef.Blocks[i].Ops
+		for j:= range ops {
+			if ops[j].ShapeOpSig == shapeHash {
+				shapeOp := ops[j].ShapeOp
+				shape.ShapeType = shapeOp.ShapeType
+				shape.ShapeSvgString = shapeOp.ShapeSvgString
+				shape.Fill = shapeOp.Fill
+				shape.Stroke = shapeOp.Stroke
+				return nil
+			}
+		}
+	}
+	fmt.Println("Could not get shape in blockchain.")
+	return blockartlib.InvalidShapeHashError(shapeHash)
+}
+
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
 
@@ -822,7 +847,6 @@ func main() {
 	ConnectServer(serverAddr)
 
 	// if sole miner, create blockchain
-
 	BlockchainRef = NewBlockchain()
 
 	// else request blockchain from other miners
