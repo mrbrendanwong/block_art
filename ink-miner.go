@@ -224,10 +224,6 @@ func NewGenesisBlock() *Block {
 	return block
 }
 
-func ValidateBlock() bool {
-	return false
-}
-
 func ValidateOperation() bool {
 	return false
 }
@@ -529,16 +525,21 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		return errors.New("Bad nonce")
 	}
 
-	// Check valid signature
+	// Check for valid signature
 	err = checkValidSignature(block)
+
 	// Check if valid parent
 	err = checkValidParent(block)
 
-	//TODO:
 	// Add to blockchain, update last block
+	BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
+	BlockchainRef.LastBlock = block
 
 	//TODO:
 	// Update ink amounts
+
+	//TODO:
+	// Send block to connected miners
 
 	// Send signal to channel that block validation is complete
 	validationComplete <- 1
@@ -770,7 +771,7 @@ func sendBlock(block *Block) {
 	var m []string
 	var reply *bool
 	for _, value := range connectedMiners.miners {
-		value.Call("RServer.ValidateBlock", b, reply)
+		value.Call("InkMiner.ValidateBlock", b, reply)
 	}
 }
 
