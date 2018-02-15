@@ -502,8 +502,9 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	return nil
 }
 
-// Validate received block
+// Validate received block, also check longest path
 func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+
 	// Send signal to channel that block was received
 	recvBlockChannel <- 1
 
@@ -514,10 +515,14 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		outlog.Printf("Couldn't unmarshal block string:%s\n", err)
 	}
 
+	//TODO
+	// Check depth of received block for longest chain
+
 	// Check that block hasn't been repeated, check from end first
 	for i := range len(BlockchainRef.Blocks) {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
+			validationComplete <- 1
 			return errors.New("Repeated block")
 		}
 	}
@@ -525,18 +530,21 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	// Check that nonce is correct
 	err = checkNonce(block)
 	if err != nil {
+		validationComplete <- 1
 		return errors.New("Bad nonce")
 	}
 
 	// Check for valid signature
 	err = checkValidSignature(block)
 	if err != nil {
+		validationComplete <- 1
 		return errors.New("Bad signature")
 	}
 
 	// Check if valid parent
 	err = checkValidParent(block)
 	if err != nil {
+		validationComplete <- 1
 		return errors.New("Bad parent")
 	}
 
