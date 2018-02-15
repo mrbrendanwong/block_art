@@ -239,19 +239,19 @@ func ValidateOperation() bool {
 // AddBlock saves provided data as a block in the blockchain
 // Block has been validated
 // data is a json encoded string
-func (bc *Blockchain) AddBlock(nonce string, data string) {
-	prevBlock := bc.blocks[len(bc.blocks)-1]
+func AddBlock(nonce string, data string) {
+	prevBlock := BlockchainRef.Blocks[len(BlockchainRef.Blocks)-1]
 	newBlock := NewBlock(*prevBlock, data, nonce)
-	bc.blocks = append(bc.blocks, newBlock)
+	BlockchainRef.Blocks = append(BlockchainRef.Blocks, newBlock)
 	// store reference to last block
-	bc.LastBlock = newBlock
+	BlockchainRef.LastBlock = newBlock
 }
 
 //NewBlockchain creates a new Blockchain with genesis Block
 func NewBlockchain() *Blockchain {
 	genesisBlock := NewGenesisBlock()
 	return &Blockchain{
-		blocks:    []*Block{genesisBlock},
+		Blocks:    []*Block{genesisBlock},
 		LastBlock: genesisBlock,
 	}
 }
