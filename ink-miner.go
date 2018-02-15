@@ -13,6 +13,7 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"log"
 	"math/rand"
@@ -48,7 +49,7 @@ var (
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 
-	// Connected mineres
+	// Connected miners
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
 
 	// Channel to signal incoming ops, blocks
@@ -168,7 +169,7 @@ type Miner struct {
 // Map of all miners currently connected
 type ConnectedMiners struct {
 	sync.RWMutex
-	miners map[string]*Miner
+	Miners map[string]*Miner
 }
 
 // Basic information on this miner
@@ -437,7 +438,7 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 		return err
 	}
 
-	// Resgister to miner to miner map
+	// Register to miner to miner map
 	connectedMiners.Lock()
 	connectedMiners.miners[minerAddr.String()] = &Miner{
 		Address:         minerAddr,
@@ -456,6 +457,11 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	outLog.Println("Monitoring heartbeat of connecting miner")
 
 	return nil
+}
+
+// Validate received block
+func (m InkMiner) validateBlock(args *MinerInfo, reply *MinerInfo) (err error) {
+
 }
 
 // Sends heartbeat signals to other miners
@@ -513,12 +519,12 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 }
 
 // Mine op block, or validate block by creating block
+// Creation of noop blocks broken up to check for received ops or blocks
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
 	// vars needed to create noop block
 	var depth, ink uint32
 	var prevBlockHash, nonce, hash string
-	var parent *Block
 
 	// Channels
 	opChannel = make(chan int, 3)
@@ -538,9 +544,8 @@ func startMining() {
 		default:
 			//TODO: Get leaf in longest chain
 			//TODO: Set the variables above
-			log.Println("DO SOME WORK")
 		}
-	Rest:
+
 		select {
 		case <-opChannel:
 			<-opComplete
@@ -550,7 +555,7 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
-			pkeyString = pubKeyToString(PubKey)
+			pubKeyString = pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
 			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
@@ -562,8 +567,21 @@ func startMining() {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			// TODO: Create the actual block and disseminate as json encoded string to workers
-			// TODO: Add amount of noop ink to miner
+			// Create block, send block to miners, add to blockchain, increase ink supply
+			block := &Block{
+				Hash:          hash,
+				Depth:         uint32(depth + 1),
+				PrevBlockHash: prevHash,
+				PubKeyMiner:   pubKeyString,
+				Nonce:         nonce,
+				Ink:           ink + Settings.InkPerNoOpBlock,
+			}
+			sendBlock(block)
+			append(BlockchainRef.Blocks, block)
+			Ink += Settings.InkPerNoOpBlock
+
+			// Update last block
+			BlockchainRef.LastBlock = block
 		}
 	}
 }
@@ -594,6 +612,19 @@ func computeNonceSecretHash(nonce string, secret string) string {
 	h.Write([]byte(nonce + secret))
 	str := hex.EncodeToString(h.Sum(nil))
 	return str
+}
+
+// Send newly created block to all connected miners to be validated
+func sendBlock(block *Block) {
+	b, err := json.Marshal(block)
+	if err != nil {
+		outlog.Printf("Error marshalling block into string:%s\n", err)
+	}
+	var m []string
+	var reply *bool
+	for _, value := range connectedMiners.miners {
+		value.Call("RServer.ValidateBlock", b, reply)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
