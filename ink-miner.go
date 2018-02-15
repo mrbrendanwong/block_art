@@ -303,14 +303,24 @@ func ConnectServer(serverAddr string) {
 		return
 	}
 
-	// start sending heartbeats
+	// Store miner settings from sever
+	Settings = settings
+
+	// Start sending heartbeats
 	go sendHeartBeats()
 
 	// start mining noop blocks
 	go startMining()
 
 	// Get nodes from server and attempt to connect to them
-	GetNodes()
+	err = GetNodes()
+	if err != nil {
+		outLog.Println("Error getting nodes from server: ", err)
+		return
+	}
+
+	// Monitor the miner threshold
+	go monitorThreshold()
 
 	// TODO:
 	// Listen for incoming miner connections
@@ -374,6 +384,40 @@ func GetNodes() (err error) {
 	outLog.Printf("Connected to %d new ink miners\n", newMiners)
 
 	return nil
+}
+
+/* Monitors the current number of miners connected to this miner
+ * If the number of miners is below the minimum, we will keep pinging the server
+ * until we have the required number of miners to keep working
+ *
+ * TODO: This will need to be extended to stop/pause mining and other activities
+ *       whenever we fall below the min threshold
+ */
+func monitorThreshold() {
+	for {
+		connectedMiners.Lock()
+		numConnectedMiners := len(connectedMiners.miners)
+		connectedMiners.Unlock()
+		threshold := int(Settings.MinNumMinerConnections)
+
+
+		if numConnectedMiners < threshold {
+			outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
+			outLog.Printf("Threshold: %d\n", threshold)
+			outLog.Println("We are below the minimum miner threshold!")
+
+			err := GetNodes()
+			if err != nil {
+				outLog.Println("Error getting nodes from server: ", err)
+			}
+
+		} else {
+			continue
+		}
+
+		// Wait before checking again
+		time.Sleep(2 * time.Second)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////
