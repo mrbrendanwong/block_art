@@ -38,12 +38,13 @@ type InkMiner int
 var (
 	config Config
 	// Identity related variables
-	Server    *rpc.Client     /* Connection to Server */
-	PubKey    ecdsa.PublicKey /* Public and private key pair for validation */
-	PrivKey   *ecdsa.PrivateKey
-	LocalAddr net.Addr
-	Settings  MinerNetSettings
-	Ink       uint32
+	Server        *rpc.Client     /* Connection to Server */
+	PubKey        ecdsa.PublicKey /* Public and private key pair for validation */
+	PrivKey       *ecdsa.PrivateKey
+	LocalAddr     net.Addr
+	Settings      MinerNetSettings
+	BlockchainRef *Blockchain
+	Ink           uint32
 	// Error logging
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
@@ -121,7 +122,7 @@ type Config struct {
 
 //TODO FIX TYPES
 
-type Transaction struct {
+type Op struct {
 	// ShapeOp is an application shape operation
 	ShapeOp string
 	// ShapeOpSig is the signature of the shape operation generated using the private key and the operation
@@ -135,7 +136,7 @@ type Block struct {
 	// Depth is the position of the block within the blockchain
 	Depth uint32
 	// Transactions are the list of transactions the block performs
-	Transactions []*Transaction
+	Ops []*Op
 	// PrevBlockHash is the hash of the previous block
 	PrevBlockHash string
 	// Hash is the hash of the current block
@@ -146,15 +147,14 @@ type Block struct {
 	Nonce string
 	// Parent is pointer to parent block
 	Parent *Block
-	// Children is array of pointers to children of block
-	Children []*Block
 	// Ink is the amount of ink the miner associated with pubkeyminer has
 	Ink uint32
 }
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
-	blocks []*Block
+	blocks    []*Block
+	LastBlock *Block
 }
 
 // Represents a miner. Adapted from server.go
@@ -188,43 +188,41 @@ func handleErrorFatal(msg string, e error) {
 }
 
 type ArtNodeInfo struct {
-	Transactions []*Transaction
-	PubKeyMiner  ecdsa.PublicKey
-	Nonce        string
-	Ink          uint32
+	Ops         []*Op
+	PubKeyMiner ecdsa.PublicKey
+	Nonce       string
+	Ink         uint32
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // BLOCK FUNCTIONS
 ////////////////////////////////////////////////////////////////////////////////
 
-// // Create a new block
-// func NewBlock(depth uint32, transactions string, prevBlockHash string) *Block {
-//     block := &Block{
-//         Depth: depth,
-//         Parent:
-//         Children: []*Block,
-//         PubKeyMiner:
-//         Ink:
-//         Transactions: []byte(transactions),
-//         PrevBlockHash: prevBlockHash,
-//         Hash: []byte{},
-//     }
-//     block.SetHash()
-//     return block
-// }
+// Create a new block
+func NewBlock(prevBlock Block, hash string, nonce string) *Block {
+	block := &Block{
+		Depth:       prevBlock.Depth + 1,
+		Parent:      &prevBlock,
+		PubKeyMiner: PubKey,
+		Ink:         Ink,
+		// Ops:
+		PrevBlockHash: prevBlock.Hash,
+		Hash:          hash,
+		Nonce:         nonce,
+	}
+	return block
+}
 
 // // NewGenesisBlock creates and returns genesis Block
-// func NewGenesisBlock() *Block {
-//     block := &Block{
-//         Hash: config.GenesisBlockHash,
-//         Children: []*Block,
-//         Ink: 0,
-//         Depth: 0,
-//         PrevBlockHash: ""
-//     }
-//     return block
-// }
+func NewGenesisBlock() *Block {
+	block := &Block{
+		Hash:          config.GenesisBlockHash,
+		Ink:           0,
+		Depth:         0,
+		PrevBlockHash: "",
+	}
+	return block
+}
 
 func ValidateBlock() bool {
 	return false
@@ -239,17 +237,23 @@ func ValidateOperation() bool {
 ////////////////////////////////////////////////////////////////////////////////
 
 // AddBlock saves provided data as a block in the blockchain
-// func (bc *Blockchain) AddBlock(data string) {
-//     // ValidateBlock
-//     prevBlock := bc.blocks[len(bc.blocks)-1]
-//     newBlock := NewBlock(prevBlock,  data, prevBlock.Hash)
-//     bc.blocks = append(bc.blocks, newBlock)
-// }
+// Block has been validated
+// data is a json encoded string
+func (bc *Blockchain) AddBlock(nonce string, data string) {
+	prevBlock := bc.blocks[len(bc.blocks)-1]
+	newBlock := NewBlock(*prevBlock, data, nonce)
+	bc.blocks = append(bc.blocks, newBlock)
+	// store reference to last block
+	bc.LastBlock = newBlock
+}
 
-// NewBlockchain creates a new Blockchain with genesis Block
-// func NewBlockchain() *Blockchain {
-//     return &Blockchain{[]*Block{NewGenesisBlock()}}
-// }
+//NewBlockchain creates a new Blockchain with genesis Block
+func NewBlockchain() *Blockchain {
+	return &Blockchain{
+		blocks:    []*Block{NewGenesisBlock()},
+		LastBlock: nil,
+	}
+}
 
 ////////////////////////////////////////////////////////////////////////////////
 // MINER - SERVER
@@ -536,11 +540,14 @@ func startMining() {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			//TODO: Get leaf in longest chain
-			//TODO: Set the variables above
-			log.Println("DO SOME WORK")
+			//Get leaf
+			lastBlock := BlockchainRef.LastBlock
+			depth = lastBlock.Depth
+			ink = lastBlock.Ink
+			prevBlockHash = lastBlock.PrevBlockHash
+			parent = lastBlock.Parent
 		}
-	Rest:
+		// Rest:
 		select {
 		case <-opChannel:
 			<-opComplete
@@ -617,6 +624,7 @@ func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
 
+	// todo when should ink actually be updated?
 	Ink = Ink - args.InkRequired
 	*reply = shared.AddShapeResponse{InkRemaining: Ink}
 
@@ -640,4 +648,10 @@ func main() {
 	serverAddr := args[1]
 
 	ConnectServer(serverAddr)
+
+	// if sole miner, create blockchain
+
+	BlockchainRef = NewBlockchain()
+
+	// else request blockchain from other miners
 }
