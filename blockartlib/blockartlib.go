@@ -315,8 +315,7 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 }
 
 func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
-	var shape shared.Shape
-	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
+	err = a.Miner.Call("InkMiner.GetSvgString", shapeHash, &svgString)
 	if err != nil {
 		fmt.Println("Could not retrieve svg string.")
 		return "", err
@@ -342,13 +341,21 @@ func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining 
 }
 
 func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
-	return nil, nil
+	if !a.connected {
+		return nil, DisconnectedError("")
+	}
+	err = a.Miner.Call("InkMiner.GetShapes", blockHash, &shapeHashes)
+	if err != nil {
+		fmt.Println("Could not find block ", blockHash)
+		return nil, InvalidBlockHashError(blockHash)
+	}
+	return shapeHashes, nil
 }
 
 // Get hash of the first block of the block chain
 func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 	if !a.connected {
-		return "" , DisconnectedError("");
+		return "" , DisconnectedError("")
 	}
 	a.Miner.Call("InkMiner.GetGenesisBlock", "", &blockHash)
 	return blockHash, nil

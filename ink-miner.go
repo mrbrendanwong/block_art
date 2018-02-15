@@ -153,6 +153,7 @@ type Block struct {
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
+	sync.RWMutex
 	Blocks    []*Block
 	LastBlock *Block
 }
@@ -799,19 +800,42 @@ func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error){
 	return nil
 }
 
-func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp) (err error){
-	fmt.Println(BlockchainRef)
+// Returns Svg string to corresponding shape
+func (m InkMiner) GetSvgString(shapeHash string, svgString *string)(err error){
+	BlockchainRef.RLock()
 	for i := range BlockchainRef.Blocks {
 		ops := BlockchainRef.Blocks[i].Ops
 		for j:= range ops {
 			if ops[j].ShapeOpSig == shapeHash {
-				*shape = ops[j].ShapeOp
+				*svgString = ops[j].ShapeOp.ShapeSvgString
+				BlockchainRef.RUnlock()
 				return nil
 			}
 		}
 	}
-	fmt.Println("Could not get shape in blockchain.")
+	BlockchainRef.RUnlock()
 	return blockartlib.InvalidShapeHashError(shapeHash)
+}
+
+func (m InkMiner) GetShapes(blockHash string, shapes *[]string)(err error){
+	BlockchainRef.RLock()
+	for i := range BlockchainRef.Blocks {
+		if BlockchainRef.Blocks[i].Hash == blockHash {
+			block := BlockchainRef.Blocks[i]
+			for j :=  range block.Ops {
+				*shapes = append(*shapes, block.Ops[j].ShapeOpSig)
+			}
+			BlockchainRef.RUnlock()
+			return nil
+		}
+	}
+	BlockchainRef.RUnlock()
+	return blockartlib.InvalidBlockHashError(blockHash)
+}
+
+func (m InkMiner) GetChildren(blockHash string, children *[]string)(err error){
+	// TODO
+	return nil
 }
 
 // TODO ADD TO BLOCKCHAIN
