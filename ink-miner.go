@@ -13,6 +13,8 @@ import (
 	"crypto/x509"
 	"encoding/gob"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -49,7 +51,7 @@ var (
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 
-	// Connected mineres
+	// Connected miners
 	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
 
 	// Channel to signal incoming ops, blocks
@@ -145,8 +147,6 @@ type Block struct {
 	PubKeyMiner ecdsa.PublicKey
 	// Nonce is a 32-bit unsigned integer nonce
 	Nonce string
-	// Parent is pointer to parent block
-	Parent *Block
 	// Ink is the amount of ink the miner associated with pubkeyminer has
 	Ink uint32
 }
@@ -168,7 +168,7 @@ type Miner struct {
 // Map of all miners currently connected
 type ConnectedMiners struct {
 	sync.RWMutex
-	miners map[string]*Miner
+	Miners map[string]*Miner
 }
 
 // Basic information on this miner
@@ -222,10 +222,6 @@ func NewGenesisBlock() *Block {
 		PrevBlockHash: "",
 	}
 	return block
-}
-
-func ValidateBlock() bool {
-	return false
 }
 
 func ValidateOperation() bool {
@@ -404,7 +400,6 @@ func monitorThreshold() {
 		connectedMiners.Unlock()
 		threshold := int(Settings.MinNumMinerConnections)
 
-
 		if numConnectedMiners < threshold {
 			outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
 			outLog.Printf("Threshold: %d\n", threshold)
@@ -486,7 +481,7 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 		return err
 	}
 
-	// Resgister to miner to miner map
+	// Register to miner to miner map
 	connectedMiners.Lock()
 	connectedMiners.miners[minerAddr.String()] = &Miner{
 		Address:         minerAddr,
@@ -505,6 +500,49 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	outLog.Println("Monitoring heartbeat of connecting miner")
 
 	return nil
+}
+
+// Validate received block
+func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+	// Send signal to channel that block was received
+	recvBlockChannel <- 1
+
+	// Turn json string into struct
+	var block Block
+	err = json.Unmarshal(args.BlockString, block)
+
+	// Check that block hasn't been repeated, check from end first
+	for i := range len(BlockchainRef.Blocks) {
+		b := BlockchainRef.Blocks[i]
+		if b.Hash == block.Hash {
+			return errors.New("Repeated block")
+		}
+	}
+
+	// Check that nonce is correct
+	err = checkNonce(block)
+	if err != nil {
+		return errors.New("Bad nonce")
+	}
+
+	// Check for valid signature
+	err = checkValidSignature(block)
+
+	// Check if valid parent
+	err = checkValidParent(block)
+
+	// Add to blockchain, update last block
+	BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
+	BlockchainRef.LastBlock = block
+
+	//TODO:
+	// Update ink amounts
+
+	//TODO:
+	// Send block to connected miners
+
+	// Send signal to channel that block validation is complete
+	validationComplete <- 1
 }
 
 // Sends heartbeat signals to other miners
@@ -554,6 +592,13 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
 
+// Turn public key string to public key type
+func stringToPubKey(pubString string) *ecdsa.PublicKey {
+	pKey, _ := hex.DecodeString(pubString)
+	key, _ := x509.ParseECPrivateKey(pKey)
+	return key
+}
+
 // Return string version of public key
 func pubKeyToString(pubKey ecdsa.PublicKey) string {
 	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(pubKey)
@@ -562,12 +607,12 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 }
 
 // Mine op block, or validate block by creating block
+// Creation of noop blocks broken up to check for received ops or blocks
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
 	// vars needed to create noop block
 	var depth, ink uint32
 	var prevBlockHash, nonce, hash string
-	var parent *Block
 
 	// Channels
 	opChannel = make(chan int, 3)
@@ -585,13 +630,12 @@ func startMining() {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			//Get leaf
+			//Get leaf and info above
 			lastBlock := BlockchainRef.LastBlock
 			depth = lastBlock.Depth
 			ink = lastBlock.Ink
 			prevBlockHash = lastBlock.Hash
 		}
-		// Rest:
 		select {
 		case <-opChannel:
 			<-opComplete
@@ -601,7 +645,7 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
-			pkeyString = pubKeyToString(PubKey)
+			pubKeyString = pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
 			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
@@ -613,12 +657,26 @@ func startMining() {
 			<-validationComplete
 			goto findLongestBranch
 		default:
-			// TODO: Create the actual block and disseminate as json encoded string to workers
-			// TODO: Add amount of noop ink to miner
+			// Create block, send block to miners, add to blockchain, increase ink supply
+			block := &Block{
+				Hash:          hash,
+				Depth:         uint32(depth + 1),
+				PrevBlockHash: prevHash,
+				PubKeyMiner:   pubKeyString,
+				Nonce:         nonce,
+				Ink:           ink + Settings.InkPerNoOpBlock,
+			}
+			sendBlock(block)
+			append(BlockchainRef.Blocks, block)
+			Ink += Settings.InkPerNoOpBlock
+
+			// Update last block
+			BlockchainRef.LastBlock = block
 		}
 	}
 }
 
+// Return false if nonce validation fails
 // Return nonce and hash made with nonce that has required 0s
 func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
@@ -639,12 +697,82 @@ func getNonce(blockHash string, difficulty int64) (string, string) {
 	}
 }
 
-// Helper: Returns MD5 hash of given hash + secret
+// Returns MD5 hash of given nonce + blockContents
 func computeNonceSecretHash(nonce string, secret string) string {
 	h := md5.New()
 	h.Write([]byte(nonce + secret))
 	str := hex.EncodeToString(h.Sum(nil))
 	return str
+}
+
+// Return error if nonce given does not compute block hash or if wrong difficulty
+func checkNonce(block *Block) error {
+	secret := ""
+	difficulty := Settings.PoWDifficultyNoOpBlock
+
+	// Get public key as string
+	pubKeyString := pubKeyToString(block.PubKeyMiner)
+
+	// If there are ops, include in secret
+	ops := block.Ops
+	numOps := len(block.Ops)
+	if numOps > 0 {
+		difficulty = Settings.PoWDifficultyOpBlock
+		for i := range numOps {
+			secret = fmt.Sprintf("%s%s%s", secret, ops[i].ShapeOp, ops[i].ShapeOpSig)
+		}
+	}
+
+	// Compute secret
+	secret = fmt.Sprintf("%s%s%s", block.PrevBlockHash, secret, pubKeyString)
+
+	// Check if string + nonce = hash
+	hash := computeNonceSecretHash(block.Nonce, secret)
+	if hash != block.Hash {
+		return errors.New("Incorrect hash")
+	}
+
+	// Check if hash has right difficulty
+	wantedString := strings.Repeat("0", int(difficulty))
+	if !strings.HasSuffix(hash, wantedString) {
+		return errors.New("Wrong difficulty")
+	}
+
+	return nil
+}
+
+//  Check if block has a valid signatures for the ops
+func checkValidSignature(block *Block) error {
+	ops := block.Ops
+	for i := range len(block.Ops) {
+		pkey := ops[i].PubKeyArtNode
+		if !ecdsa.Verify(pkey, ops[i].ShapeOpSig, pkey.X, pkey.Y) {
+			return errors.New("Op signature does not match")
+		}
+	}
+}
+
+// Return error if block does not have valid parent in blockchain
+func checkValidParent(block *Block) error {
+	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
+		if block.PrevBlockHash == BlockchainRef.Blocks.Hash {
+			return nil
+		}
+	}
+	return errors.New("Parent does not exist")
+}
+
+// Send newly created block to all connected miners to be validated
+func sendBlock(block *Block) {
+	b, err := json.Marshal(block)
+	if err != nil {
+		outlog.Printf("Error marshalling block into string:%s\n", err)
+	}
+	var m []string
+	var reply *bool
+	for _, value := range connectedMiners.miners {
+		value.Call("InkMiner.ValidateBlock", b, reply)
+	}
 }
 
 ////////////////////////////////////////////////////////////////////////////////

@@ -23,6 +23,10 @@ type AddShapeResponse struct {
 	Err          error
 }
 
+type BlockArgs struct {
+	BlockString string
+}
+
 type Reply struct {
 	InkRemaining uint32
 }
