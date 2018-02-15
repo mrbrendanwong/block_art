@@ -14,6 +14,7 @@ import (
 	"encoding/gob"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"math/rand"
@@ -400,7 +401,6 @@ func monitorThreshold() {
 		connectedMiners.Unlock()
 		threshold := int(Settings.MinNumMinerConnections)
 
-
 		if numConnectedMiners < threshold {
 			outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
 			outLog.Printf("Threshold: %d\n", threshold)
@@ -503,9 +503,33 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	return nil
 }
 
+//TODO:
 // Validate received block
-func (m InkMiner) validateBlock(args *MinerInfo, reply *MinerInfo) (err error) {
+func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+	// Send signal to channel that block was received
+	recvBlockChannel <- 1
 
+	// Turn json string into struct
+	var block Block
+	err := json.Unmarshal(args.BlockString, block)
+
+	// Check that block hasn't been repeated, check from end first
+	for i := range len(BlockchainRef.Blocks) {
+		b := BlockchainRef.Blocks[i]
+		if b.Hash == block.Hash {
+			return errors.New("Repeated block")
+		}
+	}
+
+	// Check nonce correct
+	checkNonce(block)
+
+	// Check valid signature
+	// Check if valid parent
+	// Add to blockchain, update last block
+
+	// Send signal to channel that block validation is complete
+	validationComplete <- 1
 }
 
 // Sends heartbeat signals to other miners
@@ -630,6 +654,7 @@ func startMining() {
 	}
 }
 
+// Return false if nonce validation fails
 // Return nonce and hash made with nonce that has required 0s
 func getNonce(blockHash string, difficulty int64) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
@@ -656,6 +681,10 @@ func computeNonceSecretHash(nonce string, secret string) string {
 	h.Write([]byte(nonce + secret))
 	str := hex.EncodeToString(h.Sum(nil))
 	return str
+}
+
+func checkNonce(block *Block) bool {
+
 }
 
 // Send newly created block to all connected miners to be validated
