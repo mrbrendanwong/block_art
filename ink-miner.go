@@ -504,7 +504,6 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 
 // Validate received block, also check longest path
 func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
-
 	// Send signal to channel that block was received
 	recvBlockChannel <- 1
 
@@ -515,15 +514,27 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		outlog.Printf("Couldn't unmarshal block string:%s\n", err)
 	}
 
-	//TODO
-	// Check depth of received block for longest chain
-
 	// Check that block hasn't been repeated, check from end first
 	for i := range len(BlockchainRef.Blocks) {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
 			validationComplete <- 1
 			return errors.New("Repeated block")
+		}
+	}
+
+	// Check depth of received block
+	if BlockchainRef.LastBlock.Depth >= block.Depth {
+		validationComplete <- 1
+		return errors.New("Block is not addition to longest chain")
+	} else {
+		// If depth difference greater than 1 then get longest chain from neighbours
+		if (block.Depth - BlockchainRef.LastBlock.Depth) > 1 {
+			// Get longest chain
+			getLongestChain()
+			// TODO
+			// Remove blocks and debit ink
+			// Get blocks needed from other miners
 		}
 	}
 
@@ -788,7 +799,7 @@ func sendBlock(block *Block) {
 	var m []string
 	var reply *bool
 	for _, value := range connectedMiners.miners {
-		value.Call("InkMiner.ValidateBlock", b, reply)
+		value.MinerConn.Call("InkMiner.ValidateBlock", b, reply)
 	}
 }
 
@@ -807,6 +818,15 @@ func updateInk(block *Block) {
 		// Add ink to miner that mined block
 		inkMap[block.PubKeyMiner] = minerInk + Settings.InkPerNoOpBlock
 	}
+}
+
+// Get longest chain from connected miners
+func getLongestChain() {
+	//TODO
+	// Get the last block from all the miners
+
+	// Compare the depth of the last block and choose biggest
+	// Get all blocks from that miner
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -855,9 +875,10 @@ func main() {
 
 	ConnectServer(serverAddr)
 
-	// if sole miner, create blockchain
-
-	BlockchainRef = NewBlockchain()
-
-	// else request blockchain from other miners
+	// if sole miner, create blockchain; else request blockchain from other miners
+	if BlockchainRef == nil {
+		BlockchainRef = NewBlockchain()
+	} else {
+		BlockchainRef = getLongestChain()
+	}
 }
