@@ -510,6 +510,9 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	// Turn json string into struct
 	var block Block
 	err = json.Unmarshal(args.BlockString, block)
+	if err != nil {
+		outlog.Printf("Couldn't unmarshal block string:%s\n", err)
+	}
 
 	// Check that block hasn't been repeated, check from end first
 	for i := range len(BlockchainRef.Blocks) {
@@ -527,19 +530,25 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 
 	// Check for valid signature
 	err = checkValidSignature(block)
+	if err != nil {
+		return errors.New("Bad signature")
+	}
 
 	// Check if valid parent
 	err = checkValidParent(block)
+	if err != nil {
+		return errors.New("Bad parent")
+	}
 
 	// Add to blockchain, update last block
 	BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 	BlockchainRef.LastBlock = block
 
-	//TODO:
 	// Update ink amounts
+	updateInk(block)
 
-	//TODO:
 	// Send block to connected miners
+	sendBlock(block)
 
 	// Send signal to channel that block validation is complete
 	validationComplete <- 1
@@ -772,6 +781,23 @@ func sendBlock(block *Block) {
 	var reply *bool
 	for _, value := range connectedMiners.miners {
 		value.Call("InkMiner.ValidateBlock", b, reply)
+	}
+}
+
+// Update ink amounts of miners
+func updateInk(block *Block) {
+	pubKey := pubKeyToString(block.PubKeyMiner)
+	minerInk := inkMap[pubKey]
+	OpMinerInk := inkMap[block.Ops.PubKeyArtNode]
+	if len(block.Ops) > 0 {
+		// Get amount of ink of ops and remove from miner of op
+		for i := range block.Ops {
+			inkMap[blocks.Ops[i].PubKeyArtNode] = OpMinerInk - block.Ops[i].InkRequired
+			inkMap[block.PubKeyMiner] = minerInk + Settings.InkPerOpBlock
+		}
+	} else {
+		// Add ink to miner that mined block
+		inkMap[block.PubKeyMiner] = minerInk + Settings.InkPerNoOpBlock
 	}
 }
 

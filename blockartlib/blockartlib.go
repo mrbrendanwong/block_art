@@ -11,13 +11,13 @@ import "crypto/ecdsa"
 import "../shared"
 import (
 	"fmt"
-	"net/rpc"
-	"sync"
-	"os"
-	"strconv"
 	"math"
+	"net/rpc"
+	"os"
 	"regexp"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -36,7 +36,6 @@ var (
 
 const SVGSTRING_MAXLEN = 128
 const BA_FILE = "blockArt.html"
-
 
 // Settings for a canvas in BlockArt.
 type CanvasSettings struct {
@@ -199,16 +198,16 @@ type Canvas interface {
 	CloseCanvas() (inkRemaining uint32, err error)
 }
 
-type ArtNode struct{
-	minerAddr 	string
-	Miner       *rpc.Client
-	connected 	bool
+type ArtNode struct {
+	minerAddr string
+	Miner     *rpc.Client
+	connected bool
 }
 
-type CanvasInstance struct{
+type CanvasInstance struct {
 	sync.RWMutex
-	canvas 		[][]bool
-	file 		*os.File
+	canvas [][]bool
+	file   *os.File
 }
 
 type Coordinates struct {
@@ -226,18 +225,18 @@ var (
 func getInkRequired(shape shared.Shape) (inkNeeded uint32, err error) {
 
 	points, err := getVertices(shape.ShapeSvgString)
-	if err != nil{
+	if err != nil {
 		// Out of bounds
 		return 0, OutOfBoundsError{}
 	}
 	var ink float64 = 0
-	j:= 0
+	j := 0
 	if shape.Stroke != "transparent" {
 		// Find parameter
-		for j < len(points) - 1 {
-			x_dist := math.Abs(float64(points[j + 1].x - points[j].x))
+		for j < len(points)-1 {
+			x_dist := math.Abs(float64(points[j+1].x - points[j].x))
 			y_dist := math.Abs(float64(points[j+1].y - points[j].y))
-			ink = ink + math.Sqrt(math.Pow(x_dist, 2) + math.Pow(y_dist, 2))
+			ink = ink + math.Sqrt(math.Pow(x_dist, 2)+math.Pow(y_dist, 2))
 			j++
 		}
 	}
@@ -245,13 +244,12 @@ func getInkRequired(shape shared.Shape) (inkNeeded uint32, err error) {
 	if shape.Fill != "transparent" {
 		// Find Area
 		// https://www.mathopenref.com/coordpolygonarea.html
-		for j < len(points) - 1{
-			ink = ink + float64(points[j].x * points[j+1].y - points[j].y * points[j+1].x)
+		for j < len(points)-1 {
+			ink = ink + float64(points[j].x*points[j+1].y-points[j].y*points[j+1].x)
 			j++
 		}
 		ink = ink / 2
 	}
-
 
 	return uint32(ink), nil
 }
@@ -284,10 +282,9 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-
 	// Check that shape does not overlap any existing shape
 	isValid := isValidShape(*shape)
-	if !isValid{
+	if !isValid {
 		return "", "", 0, InvalidShapeSvgStringError("")
 	}
 
@@ -343,7 +340,7 @@ func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error)
 	return nil, nil
 }
 
-func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
+func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error) {
 	if !a.connected {
 		return 0, DisconnectedError("")
 	}
@@ -356,20 +353,20 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 
 	// Close connection to miner
 	a.Miner.Close()
-	a.connected = false						// Mark as no longer connected
+	a.connected = false // Mark as no longer connected
 
 	return 0, nil // Return no ink remaining for now
 }
 
 // This function returns the list of vertices contained in the SVG string
-func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
+func getVertices(shapeSVGString string) (vertices []Coordinates, err error) {
 	// https://www.w3.org/TR/SVG2/paths.html
 	// ex. M 0 0 L 0 5
 
 	points := []Coordinates{}
 	r, err := regexp.Compile(`[MmHhVvLlZz][ \-0-9]*`)
 	if err != nil {
-		fmt.Println("Error getting vertices.",err)
+		fmt.Println("Error getting vertices.", err)
 		return nil, err
 	}
 	res := r.FindAllString(shapeSVGString, -1)
@@ -394,7 +391,6 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 			tmp, _ = strconv.ParseInt(args[2], 0, 8)
 			y_current = math.Abs(float64(tmp))
 
-
 		} else if args[0] == "l" {
 			// Draw line from current pos to given pos
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
@@ -413,14 +409,13 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
 			x_current = math.Abs(float64(tmp) + x_current)
 
-
 		} else if args[0] == "V" {
 			// Draw vertical line from start pos to given pos
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
 
 			y_current = math.Abs(float64(tmp))
 
-		} else if args[0] == "v"{
+		} else if args[0] == "v" {
 			// Draw vertical line from current pos to given pos
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
 			y_current = math.Abs(float64(tmp) + y_current)
@@ -432,10 +427,10 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 		}
 
 		// Check that vertices are not out of bounds
-		if x_current < 0 || x_current > float64(Settings.CanvasXMax){
+		if x_current < 0 || x_current > float64(Settings.CanvasXMax) {
 			return nil, OutOfBoundsError{}
 		}
-		if y_current < 0 || y_current > float64(Settings.CanvasYMax){
+		if y_current < 0 || y_current > float64(Settings.CanvasYMax) {
 			return nil, OutOfBoundsError{}
 		}
 		points = append(points, Coordinates{int(x_current), int(y_current)})
@@ -444,21 +439,22 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 }
 
 // This function checks that the given shape does not overlap any existing shapes
-func isValidShape(shape shared.Shape)(valid bool){
+func isValidShape(shape shared.Shape) (valid bool) {
 	// TODO:
 	// NO SUCH THING AS AN OVERLAP FOR NOW
 	return true
 }
 
 // This function draws the given shape to HTML file
-func drawShape(shapeSvgString string, fill string, stroke string){
+func drawShape(shapeSvgString string, fill string, stroke string) {
 	f := BACanvas.file
-	ptr, err := f.Seek(-int64(len("</svg>")),2)
-	if err != nil{
-		fmt.Println("ERROR",err)
+	ptr, err := f.Seek(-int64(len("</svg>")), 2)
+	if err != nil {
+		fmt.Println("ERROR", err)
 	}
-	f.WriteAt([]byte("<path d=\"" + shapeSvgString + "\" fill=\"" + fill + "\" stroke=\"" + stroke + "\"/>\n</svg>"), ptr)
+	f.WriteAt([]byte("<path d=\""+shapeSvgString+"\" fill=\""+fill+"\" stroke=\""+stroke+"\"/>\n</svg>"), ptr)
 }
+
 // The constructor for a new Canvas object instance. Takes the miner's
 // IP:port address string and a public-private key pair (ecdsa private
 // key type contains the public key). Returns a Canvas instance that
@@ -497,16 +493,16 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	return canvas, settings, nil
 }
 
-func createCanvas(x int, y int){
+func createCanvas(x int, y int) {
 	grid := make([][]bool, y)
 	for i := 0; i < y; i++ {
 		grid[i] = make([]bool, x)
 	}
 
-	file, err := os.OpenFile(BA_FILE + "_" + time.Now().String(), os.O_CREATE | os.O_WRONLY, 0664)
+	file, err := os.OpenFile(BA_FILE+"_"+time.Now().String(), os.O_CREATE|os.O_WRONLY, 0664)
 	file.Write([]byte("<svg height=\"" + strconv.Itoa(x) + "\" width=\"" + strconv.Itoa(y) + "\">\n</svg>"))
 	//defer file.Close()
-	if err != nil{
+	if err != nil {
 		fmt.Println("Error: could not create HTML file.")
 	}
 
