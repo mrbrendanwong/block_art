@@ -153,7 +153,7 @@ type Block struct {
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
-	blocks    []*Block
+	Blocks    []*Block
 	LastBlock *Block
 }
 
