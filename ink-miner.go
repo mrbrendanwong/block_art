@@ -546,7 +546,6 @@ func startMining() {
 			depth = lastBlock.Depth
 			ink = lastBlock.Ink
 			prevBlockHash = lastBlock.PrevBlockHash
-			parent = lastBlock.Parent
 		}
 		// Rest:
 		select {
