@@ -799,17 +799,13 @@ func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error){
 	return nil
 }
 
-func (m InkMiner) GetShape(shapeHash string, shape *shared.Shape) (err error){
+func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp) (err error){
 	fmt.Println(BlockchainRef)
 	for i := range BlockchainRef.Blocks {
 		ops := BlockchainRef.Blocks[i].Ops
 		for j:= range ops {
 			if ops[j].ShapeOpSig == shapeHash {
-				shapeOp := ops[j].ShapeOp
-				shape.ShapeType = shapeOp.ShapeType
-				shape.ShapeSvgString = shapeOp.ShapeSvgString
-				shape.Fill = shapeOp.Fill
-				shape.Stroke = shapeOp.Stroke
+				*shape = ops[j].ShapeOp
 				return nil
 			}
 		}
