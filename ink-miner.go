@@ -249,9 +249,10 @@ func (bc *Blockchain) AddBlock(nonce string, data string) {
 
 //NewBlockchain creates a new Blockchain with genesis Block
 func NewBlockchain() *Blockchain {
+	genesisBlock := NewGenesisBlock()
 	return &Blockchain{
-		blocks:    []*Block{NewGenesisBlock()},
-		LastBlock: nil,
+		blocks:    []*Block{genesisBlock},
+		LastBlock: genesisBlock,
 	}
 }
 
