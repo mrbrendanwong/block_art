@@ -147,8 +147,6 @@ type Block struct {
 	PubKeyMiner ecdsa.PublicKey
 	// Nonce is a 32-bit unsigned integer nonce
 	Nonce string
-	// Parent is pointer to parent block
-	Parent *Block
 	// Ink is the amount of ink the miner associated with pubkeyminer has
 	Ink uint32
 }
@@ -508,7 +506,6 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	return nil
 }
 
-//TODO:
 // Validate received block
 func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
 	// Send signal to channel that block was received
@@ -516,7 +513,7 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 
 	// Turn json string into struct
 	var block Block
-	err := json.Unmarshal(args.BlockString, block)
+	err = json.Unmarshal(args.BlockString, block)
 
 	// Check that block hasn't been repeated, check from end first
 	for i := range len(BlockchainRef.Blocks) {
@@ -526,12 +523,22 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		}
 	}
 
-	// Check nonce correct
-	checkNonce(block)
+	// Check that nonce is correct
+	err = checkNonce(block)
+	if err != nil {
+		return errors.New("Bad nonce")
+	}
 
 	// Check valid signature
+	err = checkValidSignature(block)
 	// Check if valid parent
+	err = checkValidParent(block)
+
+	//TODO:
 	// Add to blockchain, update last block
+
+	//TODO:
+	// Update ink amounts
 
 	// Send signal to channel that block validation is complete
 	validationComplete <- 1
@@ -583,6 +590,13 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 ////////////////////////////////////////////////////////////////////////////////
 // MINER CALLS
 ////////////////////////////////////////////////////////////////////////////////
+
+// Turn public key string to public key type
+func stringToPubKey(pubString string) *ecdsa.PublicKey {
+	pKey, _ := hex.DecodeString(pubString)
+	key, _ := x509.ParseECPrivateKey(pKey)
+	return key
+}
 
 // Return string version of public key
 func pubKeyToString(pubKey ecdsa.PublicKey) string {
@@ -682,7 +696,7 @@ func getNonce(blockHash string, difficulty int64) (string, string) {
 	}
 }
 
-// Helper: Returns MD5 hash of given hash + secret
+// Returns MD5 hash of given nonce + blockContents
 func computeNonceSecretHash(nonce string, secret string) string {
 	h := md5.New()
 	h.Write([]byte(nonce + secret))
@@ -690,8 +704,61 @@ func computeNonceSecretHash(nonce string, secret string) string {
 	return str
 }
 
-func checkNonce(block *Block) bool {
+// Return error if nonce given does not compute block hash or if wrong difficulty
+func checkNonce(block *Block) error {
+	secret := ""
+	difficulty := Settings.PoWDifficultyNoOpBlock
 
+	// Get public key as string
+	pubKeyString := pubKeyToString(block.PubKeyMiner)
+
+	// If there are ops, include in secret
+	ops := block.Ops
+	numOps := len(block.Ops)
+	if numOps > 0 {
+		difficulty = Settings.PoWDifficultyOpBlock
+		for i := range numOps {
+			secret = fmt.Sprintf("%s%s%s", secret, ops[i].ShapeOp, ops[i].ShapeOpSig)
+		}
+	}
+
+	// Compute secret
+	secret = fmt.Sprintf("%s%s%s", block.PrevBlockHash, secret, pubKeyString)
+
+	// Check if string + nonce = hash
+	hash := computeNonceSecretHash(block.Nonce, secret)
+	if hash != block.Hash {
+		return errors.New("Incorrect hash")
+	}
+
+	// Check if hash has right difficulty
+	wantedString := strings.Repeat("0", int(difficulty))
+	if !strings.HasSuffix(hash, wantedString) {
+		return errors.New("Wrong difficulty")
+	}
+
+	return nil
+}
+
+//  Check if block has a valid signatures for the ops
+func checkValidSignature(block *Block) error {
+	ops := block.Ops
+	for i := range len(block.Ops) {
+		pkey := ops[i].PubKeyArtNode
+		if !ecdsa.Verify(pkey, ops[i].ShapeOpSig, pkey.X, pkey.Y) {
+			return errors.New("Op signature does not match")
+		}
+	}
+}
+
+// Return error if block does not have valid parent in blockchain
+func checkValidParent(block *Block) error {
+	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
+		if block.PrevBlockHash == BlockchainRef.Blocks.Hash {
+			return nil
+		}
+	}
+	return errors.New("Parent does not exist")
 }
 
 // Send newly created block to all connected miners to be validated
