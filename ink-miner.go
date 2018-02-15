@@ -545,7 +545,7 @@ func startMining() {
 			lastBlock := BlockchainRef.LastBlock
 			depth = lastBlock.Depth
 			ink = lastBlock.Ink
-			prevBlockHash = lastBlock.PrevBlockHash
+			prevBlockHash = lastBlock.Hash
 		}
 		// Rest:
 		select {
