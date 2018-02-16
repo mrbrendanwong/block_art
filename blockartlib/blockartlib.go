@@ -10,16 +10,15 @@ package blockartlib
 import "crypto/ecdsa"
 import "../shared"
 import (
-	"crypto/x509"
-	"encoding/hex"
 	"fmt"
-	"log"
 	"math"
 	"net/rpc"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"log"
 )
 
 const (
@@ -326,68 +325,6 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 }
 
 func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
-	//	if !a.connected {
-	//		return 0, DisconnectedError("")
-	//	}
-	//
-	//	var shape shared.Shape
-	//	var newShape shared.Shape
-	//	// Get shape from block chain
-	//	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
-	//	if err != nil {
-	//		handleError("Could not delete shape.", err)
-	//		return 0, err
-	//	}
-	//	if shape.Fill != "transparent"{
-	//		// Create new shape
-	//		newShape = shared.Shape{
-	//			shape.ShapeType,
-	//			shape.ShapeSvgString,
-	//			"white",
-	//			"white",
-	//		}
-	//	} else {
-	//		// Create new shape
-	//		newShape = shared.Shape{
-	//			shape.ShapeType,
-	//			shape.ShapeSvgString,
-	//			shape.Fill,
-	//			shape.Stroke,
-	//		}
-	//	}
-	//
-	//	// Sign the shape op
-	//	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
-	//	shapeOpSig := &shared.ShapeOpSig{
-	//		R: r,
-	//		S: s,
-	//	}
-	//	if err != nil {
-	//		fmt.Println()
-	//	}
-	//	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
-	//	encodedBytes := hex.EncodeToString(pubKeyBytes)
-	//
-	//	// Create new shape op
-	//	op := &shared.Op{
-	//		ShapeOpSig:    *shapeOpSig,
-	//		ValidateNum:   validateNum,
-	//		InkRequired:   0,
-	//		ShapeOp:       newShape,
-	//		PubKeyArtNode: encodedBytes,
-	//	}
-	//
-	//	var response shared.AddShapeResponse
-	//	err = a.Miner.Call("InkMiner.AddShape", op, &response)
-	//
-	//	// TODO fix error handling
-	//	if response.Err != nil {
-	//		return 0, response.Err
-	//	}
-	//
-	//	fmt.Printf("InkRemaining after drawing shape:%d\n", response.InkRemaining)
-	//
-	//	return response.InkRemaining, nil
 	return 0, nil
 }
 
