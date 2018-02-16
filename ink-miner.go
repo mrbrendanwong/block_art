@@ -538,8 +538,9 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		// If depth difference greater than 1 then get longest chain from neighbours
 		if (block.Depth - depth) > 1 {
 			// Get longest chain
+			BlockchainRef.Lock()
 			getLongestChain()
-			// TODO
+			BlockchainRef.Unlock()
 		}
 	}
 
@@ -630,7 +631,7 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // Turn public key string to public key type
 func stringToPubKey(pubString string) *ecdsa.PublicKey {
 	pKey, _ := hex.DecodeString(pubString)
-	key, _ := x509.ParseECPrivateKey(pKey)
+	key, _ := x509.ParsePKIXPublicKey(pKey)
 	return key
 }
 
@@ -837,7 +838,7 @@ func updateInk(block *Block) {
 	}
 }
 
-// Get longest chain from connected miners, credit and debit ink
+// Get longest chain from connected miners
 func getLongestChain() *Blockchain {
 	//TODO
 	// Get the last block from all the miners
@@ -903,12 +904,14 @@ func main() {
 	ConnectServer(serverAddr)
 
 	// if sole miner, create blockchain; else request blockchain from other miners
-	if BlockchainRef == nil {
+	if len(connectedMiners.Miners) == 0 {
 		BlockchainRef.Lock()
 		BlockchainRef = NewBlockchain()
 		BlockchainRef.Unlock()
 	} else {
 		bchain := getLongestChain()
+		//TODO do some shit to get the actual blocks
+		// TODO ask for the missing blocks from
 		BlockchainRef.Lock()
 		BlockchainRef = bchain
 		BlockchainRef.Unlock()
