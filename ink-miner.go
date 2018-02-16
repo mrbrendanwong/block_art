@@ -358,16 +358,8 @@ func ConnectServer(serverAddr string) {
 	ln, err := net.Listen("tcp", localAddr)
 	LocalAddr = ln.Addr()
 
-	// TODO:
-	// Generating public and private key pairing for now
-	// Eventually need to use file parameters
-	r, err := os.Open("/dev/urandom")
-	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
-	PubKey = key.PublicKey
-	PrivKey = key
 	// initialize ink map for current miner
 	inkMap[pubKeyToString(PubKey)] = 0
-	defer r.Close()
 
 	Server, err = rpc.Dial("tcp", serverAddr)
 	if err != nil {
