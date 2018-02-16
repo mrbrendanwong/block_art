@@ -235,12 +235,12 @@ func sendOp(op *shared.Op) {
 	}
 	//var m []string
 	var reply *bool
-	for _, value := range connectedMiners.miners {
+	for _, value := range connectedMiners.Miners {
 		value.MinerConn.Call("InkMiner.ReceiveOp", b, reply)
 	}
 }
 
-func (m InkMiner) ReceiveOp(op *shared.Op, reply *shared.Op) {
+func (m InkMiner) ReceiveOp(op *shared.Op, reply *bool) error {
 	// send signal to channel that op was received
 	opChannel <- 1
 	// do POW
@@ -259,6 +259,7 @@ func (m InkMiner) ReceiveOp(op *shared.Op, reply *shared.Op) {
 	fmt.Println("SENDING BLOCK")
 	//sendBlock()
 	opBlockSent <- 1
+	return nil
 }
 
 // Validate operation from artnode
@@ -729,12 +730,12 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 // Creation of noop blocks broken up to check for received ops or blocks
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
-	// vars needed to create noop block
-	// var depth uint32
+	//vars needed to create noop block
+	var depth uint32
 	var prevBlockHash string
-	// var nonce string
-	//var hash string
-	// var parent *Block
+	var nonce string
+	var hash string
+	var pKeyString string
 
 	// Channels
 	opChannel = make(chan int, 3)
@@ -778,8 +779,8 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
-			pkeyString := pubKeyToString(PubKey)
-			contents := fmt.Sprintf("%s%s", prevBlockHash, pkeyString)
+			pKeyString = pubKeyToString(PubKey)
+			contents := fmt.Sprintf("%s%s", prevBlockHash, pKeyString)
 			getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
 		select {
@@ -802,8 +803,8 @@ func startMining() {
 			BlockchainRef.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 			BlockchainRef.Unlock()
-			ink := inkMap[pubKeyString]
-			inkMap[pubKeyString] = (ink + Settings.InkPerNoOpBlock)
+			ink := inkMap[pKeyString]
+			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 
 			// Update last block
 			BlockchainRef.Lock()
@@ -883,7 +884,8 @@ func checkValidSignature(block *Block) error {
 	ops := block.Ops
 	for i := 0; i <= len(block.Ops); i++ {
 		pkey := stringToPubKey(ops[i].PubKeyArtNode)
-		if !ecdsa.Verify(pkey, []byte(ops[i].ShapeOpSig), pkey.X, pkey.Y) {
+		op := ops[i]
+		if !ecdsa.Verify(pkey, []byte(op.ShapeOp.ShapeSvgString), op.ShapeOpSig.R, op.ShapeOpSig.S) {
 			return errors.New("Op signature does not match")
 		}
 	}
@@ -982,7 +984,6 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 	return nil
 }
 
-
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
 	// validate op myself
@@ -997,10 +998,8 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	// start POW myself too
 	// by sending channel interrupt
 
-
 	return nil
 }
-*/
 
 // Return block with largest depth
 func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
