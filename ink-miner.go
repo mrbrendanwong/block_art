@@ -269,10 +269,34 @@ func validateOp(op *shared.Op) bool {
 		return false
 	}
 	// check that op with identical signature doesn't exist
+	if isOpExists(op) {
+		return false
+	}
 
 	// check no intersects
+	if isOpIntersects(op) {
+		return false
+	}
 
+	if isOpDeleteInvalid(op) {
+		return false
+	}
 	// if op is delete op, check that original op exists
+	return true
+}
+
+// TODO
+func isOpExists(op) bool {
+	return false
+}
+
+// TODO
+func isOpIntersects(op) {
+	return false
+}
+
+// TODO
+func isOpDeleteInvalid(op) {
 	return false
 }
 
@@ -280,7 +304,7 @@ func validateOp(op *shared.Op) bool {
 func GetMinerInk(pubKey string) uint32 {
 	ink, ok := inkMap[pubKey]
 	if !ok {
-		// could not find miner in inkMap
+		// could not find miner in inkMap so ink amount is 0
 		return 0
 	}
 	return ink
@@ -683,9 +707,11 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
 	// vars needed to create noop block
-	var depth uint32
-	var prevBlockHash, nonce, hash string
-	var parent *Block
+	// var depth uint32
+	var prevBlockHash string
+	// var nonce string
+	//var hash string
+	// var parent *Block
 
 	// Channels
 	opChannel = make(chan int, 3)
@@ -731,7 +757,7 @@ func startMining() {
 			// Get the value of new hash block and nonce
 			pkeyString := pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevBlockHash, pkeyString)
-			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
+			getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
 		select {
 		case <-opChannel:
@@ -927,9 +953,9 @@ func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)
 	return nil
 }
 
-/* Changed data structure - does not apply
-func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
-	//*reply = shared.Reply{InkRemaining: Ink}
+func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error) {
+	publicKey := pubKeyToString(args.PubKey)
+	*reply = shared.Message{InkRemaining: GetMinerInk(publicKey)}
 	return nil
 }
 

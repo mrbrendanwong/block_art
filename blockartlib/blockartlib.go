@@ -333,9 +333,11 @@ func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 }
 
 func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
-
-	reply := shared.Reply{}
-	error := Miner.Call("InkMiner.GetInk", reply, &reply)
+	message := shared.Message{
+		PublicKey: publicKey,
+	}
+	reply := shared.Message{}
+	error := Miner.Call("InkMiner.GetInk", message, &reply)
 	if error != nil {
 		return 0, DisconnectedError("Could not get ink")
 	}

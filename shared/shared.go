@@ -1,6 +1,9 @@
 package shared
 
-import "math/big"
+import (
+	"crypto/ecdsa"
+	"math/big"
+)
 
 // Represents a type of shape in the BlockArt system.
 type ShapeType int
@@ -48,6 +51,7 @@ type BlockArgs struct {
 	IndexHashMap map[int]string
 }
 
-type Reply struct {
+type Message struct {
+	PublicKey    ecdsa.PublicKey
 	InkRemaining uint32
 }
