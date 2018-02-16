@@ -279,7 +279,7 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 
 	InkRequired, err := getInkRequired(*shape)
 	if err != nil {
-		fmt.Println("Error getting ink required.")
+		handleError("Error getting ink required.", err)
 		return "", "", 0, err
 	}
 	InkRemaining, err := a.GetInk()
@@ -317,11 +317,11 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 	err = a.Miner.Call("InkMiner.GetSvgString", shapeHash, &svgString)
 	if err != nil {
-		fmt.Println("Could not retrieve svg string.")
+		handleError("Could not retrieve svg string.", err)
 		return "", err
 	}
 
-	return shape.ShapeSvgString, nil
+	return svgString, nil
 }
 
 func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
@@ -337,6 +337,7 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 }
 
 func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
+
 	return 0, nil
 }
 
@@ -346,7 +347,7 @@ func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
 	}
 	err = a.Miner.Call("InkMiner.GetShapes", blockHash, &shapeHashes)
 	if err != nil {
-		fmt.Println("Could not find block ", blockHash)
+		handleError("Could not find block ", err)
 		return nil, InvalidBlockHashError(blockHash)
 	}
 	return shapeHashes, nil
@@ -357,12 +358,25 @@ func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 	if !a.connected {
 		return "" , DisconnectedError("")
 	}
-	a.Miner.Call("InkMiner.GetGenesisBlock", "", &blockHash)
+	err = a.Miner.Call("InkMiner.GetGenesisBlock", "", &blockHash)
+	if err != nil{
+		handleError("Error getting genesis block", err)
+		return "", err
+	}
 	return blockHash, nil
 }
 
 func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error) {
-	return nil, nil
+	if !a.connected{
+		return nil, DisconnectedError("")
+	}
+
+	err = a.Miner.Call("InkMiner.GetChildren", blockHash, &blockHashes)
+	if err != nil {
+		handleError("Error getting children", err)
+		return nil, err
+	}
+	return blockHashes, nil
 }
 
 // Close connection between art node and canvas
@@ -515,7 +529,7 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 	err = Miner.Call("InkMiner.RegisterArtNode", privKey.PublicKey, &settings)
 	if err != nil {
 		// Public Key does not match
-		handleErrorFatal("Public key does not match.", err)
+		handleError("Public key does not match.", err)
 		return nil, CanvasSettings{}, err
 	}
 	Settings = settings
@@ -537,8 +551,8 @@ func createCanvas(x int, y int){
 	BACanvas = &CanvasInstance{canvas: grid}
 }
 
-func handleErrorFatal(msg string, e error) {
+func handleError(msg string, e error) {
 	if e != nil {
-		errLog.Fatalf("%s, err = %s\n", msg, e.Error())
+		errLog.Println("%s, err = %s\n", msg, e.Error())
 	}
 }
