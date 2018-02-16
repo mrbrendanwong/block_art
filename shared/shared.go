@@ -24,7 +24,8 @@ type AddShapeResponse struct {
 }
 
 type BlockArgs struct {
-	BlockString string
+	BlockString  string
+	IndexHashMap map[int]string
 }
 
 type Reply struct {
