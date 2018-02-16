@@ -534,21 +534,8 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 		return nil, CanvasSettings{}, err
 	}
 	Settings = settings
-
-	// create canvas if not yet created
-	if !initiated {
-		createCanvas(int(settings.CanvasXMax), int(settings.CanvasYMax))
-	}
 	// For now return DisconnectedError
 	return canvas, settings, nil
-}
-
-func createCanvas(x int, y int){
-	grid := make([][]bool, y)
-	for i := 0; i < y; i++ {
-		grid[i] = make([]bool, x)
-	}
-
 }
 
 func handleError(msg string, e error) {
