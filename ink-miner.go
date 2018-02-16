@@ -743,7 +743,13 @@ func startMining() {
 	findLongestBranch:
 		select {
 		case <-opChannel:
-			<-powComplete //pow complete and created opblock
+			<-powComplete
+			goto findLongestBranch
+		case <-opBlockCreation:
+			<-opBlockCreated
+			goto findLongestBranch
+		case <-opBlockSend:
+			<-opBlockSent
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -773,11 +779,17 @@ func startMining() {
 			// Get the value of new hash block and nonce
 			pKeyString = pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevBlockHash, pKeyString)
-			getNonce(contents, Settings.PoWDifficultyNoOpBlock)
+			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
 		select {
 		case <-opChannel:
-			<-opComplete
+			<-powComplete
+			goto findLongestBranch
+		case <-opBlockCreation:
+			<-opBlockCreated
+			goto findLongestBranch
+		case <-opBlockSend:
+			<-opBlockSent
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
