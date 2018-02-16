@@ -6,7 +6,7 @@
     "min-num-miner-connections": 2,
     "ink-per-op-block": 100,
     "ink-per-no-op-block": 50,
-    "heartbeat": 10,
+    "heartbeat": 1000,
     "pow-difficulty-op-block": 5,
     "pow-difficulty-no-op-block": 5,
     "canvas-settings": {

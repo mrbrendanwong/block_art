@@ -944,6 +944,7 @@ func main() {
 
 	PubKey = *pubKey
 	PrivKey = privKey
+	inkMap = make(map[string]uint32)
 
 	ConnectServer(serverAddr)
 
