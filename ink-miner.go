@@ -262,42 +262,65 @@ func (m InkMiner) ReceiveOp(op *shared.Op, reply *shared.Op) {
 }
 
 // Validate operation from artnode
-func validateOp(op *shared.Op) bool {
+func validateOp(op *shared.Op) error {
 
 	// check that op's ink required < GetMinerInk()
-	if op.InkRequired > GetMinerInk(op.PubKeyArtNode) {
-		return false
+
+	err := checkEnoughInk(op)
+	if err != nil {
+		return err
 	}
 	// check that op with identical signature doesn't exist
-	if isOpExists(op) {
-		return false
+	err = checkOpExists(op)
+	if err != nil {
+		return err
 	}
-
 	// check no intersects
-	if isOpIntersects(op) {
-		return false
-	}
-
-	if isOpDeleteInvalid(op) {
-		return false
+	err = checkOpIntersects(op)
+	if err != nil {
+		return err
 	}
 	// if op is delete op, check that original op exists
-	return true
+	err = checkOpDeleteInvalid(op)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+//
+func checkEnoughInk(op *shared.Op) error {
+	if op.InkRequired > GetMinerInk(op.PubKeyArtNode) {
+		return errors.New("Not enough ink")
+	}
+	return nil
+}
+
+// check whether identical op has not already been added to the chain
+func checkOpExists(op *shared.Op) error {
+	pubKey := op.PubKeyArtNode
+	for k := 0; k < len(BlockchainRef.Blocks); k++ {
+		block := BlockchainRef.Blocks[k]
+		ops := block.Ops
+		for i := 0; i < len(block.Ops); i++ {
+			pkey := ops[i].PubKeyArtNode
+			if pkey == pubKey {
+				return errors.New("Op already exists in blockchain")
+			}
+		}
+	}
+	return nil
 }
 
 // TODO
-func isOpExists(op) bool {
-	return false
+func checkOpIntersects(op *shared.Op) error {
+	return nil
 }
 
 // TODO
-func isOpIntersects(op) {
-	return false
-}
-
-// TODO
-func isOpDeleteInvalid(op) {
-	return false
+func checkOpDeleteInvalid(op *shared.Op) error {
+	return nil
 }
 
 // Get Ink remaining for miner associated with pubKey
@@ -954,7 +977,7 @@ func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)
 }
 
 func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error) {
-	publicKey := pubKeyToString(args.PubKey)
+	publicKey := pubKeyToString(args.PublicKey)
 	*reply = shared.Message{InkRemaining: GetMinerInk(publicKey)}
 	return nil
 }
@@ -963,10 +986,11 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
 	// validate op myself
-	if !validateOp(op) {
-		reply.Err = nil
-		return nil
+	error := validateOp(op)
+	if error != nil {
+		reply.Err = error
 	}
+
 	// send validated op to neighbours so that they start mining
 	sendOp(op)
 
