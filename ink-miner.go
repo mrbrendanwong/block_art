@@ -58,7 +58,7 @@ var (
 	opChannel          chan int // int is a placeholder -> may be an op string later
 	opComplete         chan int
 	recvBlockChannel   chan int
-	validationComplete chan int
+	validationComplete chan Block
 	powComplete        chan int
 	opBlockCreation    chan int
 	opBlockCreated     chan int
@@ -240,26 +240,93 @@ func sendOp(op *shared.Op) {
 	}
 }
 
+// ReceiveOp is called from another miner which sent it a valid op
 func (m InkMiner) ReceiveOp(op *shared.Op, reply *bool) error {
-	// send signal to channel that op was received
-	opChannel <- 1
-	// do POW
-	fmt.Println("DOING POW")
-	// TODO get contents here
-	//contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
-
-	// nonce, hash := getNonce(contents, Settings.PoWDifficultyOpBlock)
-	powComplete <- 1
-	opBlockCreation <- 1
-	// pkeyString := pubKeyToString(PubKey)
-	// create Op block
-	fmt.Println("CREATING BLOCK")
-	opBlockCreated <- 1
-	opBlockSend <- 1
-	fmt.Println("SENDING BLOCK")
-	//sendBlock()
-	opBlockSent <- 1
+	fmt.Printf("Miner: %s received operation", pubKeyToString(PubKey))
+	receiveOp(op)
+	*reply = true
 	return nil
+}
+
+func isOpInBlock(op *shared.Op, block Block) bool {
+	for i := 0; i < len(block.Ops); i++ {
+		currOp := block.Ops[i]
+		if currOp == op {
+			return true
+		}
+	}
+	return false
+}
+
+// local receive op function to mine for block
+func receiveOp(op *shared.Op) {
+	var depth uint32
+	var prevBlockHash string
+	var nonce string
+	var hash string
+	var pKeyString string
+
+	opChannel <- 1
+	select {
+	case <-recvBlockChannel:
+		block := <-validationComplete
+		// check whether block validated was the current op's block
+		if isOpInBlock(op, block) {
+			opComplete <- 1
+		}
+	default:
+		// get leaf info
+		BlockchainRef.Lock()
+		lastBlock := BlockchainRef.LastBlock
+		BlockchainRef.Unlock()
+		depth = lastBlock.Depth
+		prevBlockHash = lastBlock.Hash
+	}
+	select {
+	case <-recvBlockChannel:
+		block := <-validationComplete
+		if isOpInBlock(op, block) {
+			opComplete <- 1
+		}
+	default:
+		// get new hash and nonce
+		// prev-hash, op, op-signature, pub-key, nonce]
+		pKeyString = pubKeyToString(PubKey)
+		marshalledShapeOp, _ := json.Marshal(op.ShapeOp)
+		marshalledShapeOpSig, _ := json.Marshal(op.ShapeOpSig)
+		contents := fmt.Sprintf("%s%s%s%s", prevBlockHash, pKeyString, marshalledShapeOp, marshalledShapeOpSig)
+		nonce, hash = getNonce(contents, Settings.PoWDifficultyOpBlock)
+	}
+	select {
+	case <-recvBlockChannel:
+		block := <-validationComplete
+		if isOpInBlock(op, block) {
+			opComplete <- 1
+		}
+	default:
+		// complete pow //
+		block := &Block{
+			Ops:           []*shared.Op{op},
+			Hash:          hash,
+			Depth:         uint32(depth + 1),
+			PrevBlockHash: prevBlockHash,
+			PubKeyMiner:   PubKey,
+			Nonce:         nonce,
+		}
+		sendBlock(block)
+		BlockchainRef.Lock()
+		BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
+		BlockchainRef.Unlock()
+		ink := inkMap[pKeyString]
+		inkMap[pKeyString] = (ink + Settings.InkPerOpBlock)
+
+		// Update last block
+		BlockchainRef.Lock()
+		BlockchainRef.LastBlock = block
+		BlockchainRef.Unlock()
+		// can now stop working on op
+		opComplete <- 1
+	}
 }
 
 // Validate operation from artnode
@@ -384,15 +451,24 @@ func ConnectServer(serverAddr string) {
 	// Start sending heartbeats
 	go sendHeartBeats()
 
-	// start mining noop blocks
-	//go startMining()
-
 	// Get nodes from server and attempt to connect to them
 	err = GetNodes()
 	if err != nil {
 		outLog.Println("Error getting nodes from server: ", err)
 		return
 	}
+
+	// if sole miner, create blockchain; else request blockchain from other miners
+	if len(connectedMiners.Miners) == 0 {
+		BlockchainRef = NewBlockchain()
+	} else {
+		//TODO do some shit to get the actual blocks
+		// TODO ask for the missing blocks from
+		getLongestChain()
+	}
+
+	// start mining noop blocks
+	go startMining()
 
 	// Monitor the miner threshold
 	go monitorThreshold()
@@ -594,7 +670,7 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	for i := 0; i < len(BlockchainRef.Blocks); i++ {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
-			validationComplete <- 1
+			validationComplete <- block
 			BlockchainRef.Unlock()
 			return errors.New("Repeated block")
 		}
@@ -607,7 +683,7 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	BlockchainRef.Unlock()
 
 	if depth >= block.Depth {
-		validationComplete <- 1
+		validationComplete <- block
 		return errors.New("Block is not addition to longest chain")
 	} else {
 		// If depth difference greater than 1 then get longest chain from neighbours
@@ -620,21 +696,21 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	// Check that nonce is correct
 	err = checkNonce(&block)
 	if err != nil {
-		validationComplete <- 1
+		validationComplete <- block
 		return errors.New("Bad nonce")
 	}
 
 	// Check for valid signature
 	err = checkValidSignature(&block)
 	if err != nil {
-		validationComplete <- 1
+		validationComplete <- block
 		return errors.New("Bad signature")
 	}
 
 	// Check if valid parent
 	err = checkValidParent(&block)
 	if err != nil {
-		validationComplete <- 1
+		validationComplete <- block
 		return errors.New("Bad parent")
 	}
 
@@ -651,7 +727,7 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	sendBlock(&block)
 
 	// Send signal to channel that block validation is complete
-	validationComplete <- 1
+	validationComplete <- block
 
 	return nil
 }
@@ -737,19 +813,13 @@ func startMining() {
 	opBlockSend = make(chan int, 3)
 	opBlockSent = make(chan int, 3)
 	recvBlockChannel = make(chan int, 3)
-	validationComplete = make(chan int, 3)
+	validationComplete = make(chan Block, 3)
 
 	for {
 	findLongestBranch:
 		select {
 		case <-opChannel:
-			<-powComplete
-			goto findLongestBranch
-		case <-opBlockCreation:
-			<-opBlockCreated
-			goto findLongestBranch
-		case <-opBlockSend:
-			<-opBlockSent
+			<-opComplete
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -764,13 +834,7 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
-			<-powComplete
-			goto findLongestBranch
-		case <-opBlockCreation:
-			<-opBlockCreated
-			goto findLongestBranch
-		case <-opBlockSend:
-			<-opBlockSent
+			<-opComplete
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -783,13 +847,7 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
-			<-powComplete
-			goto findLongestBranch
-		case <-opBlockCreation:
-			<-opBlockCreated
-			goto findLongestBranch
-		case <-opBlockSend:
-			<-opBlockSent
+			<-opComplete
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -807,6 +865,7 @@ func startMining() {
 			BlockchainRef.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 			BlockchainRef.Unlock()
+			fmt.Println("ADDING NOOP BLOCK")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 
@@ -988,20 +1047,16 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 	return nil
 }
 
-// TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
 	// validate op myself
 	error := validateOp(op)
 	if error != nil {
 		reply.Err = error
 	}
-
-	// send validated op to neighbours so that they start mining
+	// send validated op to neighbours
 	sendOp(op)
-
 	// start POW myself too
-	// by sending channel interrupt
-
+	receiveOp(op)
 	return nil
 }
 
@@ -1063,14 +1118,4 @@ func main() {
 
 	ConnectServer(serverAddr)
 
-	// if sole miner, create blockchain; else request blockchain from other miners
-	if len(connectedMiners.Miners) == 0 {
-		BlockchainRef.Lock()
-		BlockchainRef = NewBlockchain()
-		BlockchainRef.Unlock()
-	} else {
-		//TODO do some shit to get the actual blocks
-		// TODO ask for the missing blocks from
-		getLongestChain()
-	}
 }
