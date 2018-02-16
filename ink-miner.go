@@ -835,6 +835,30 @@ func (m InkMiner) GetShapes(blockHash string, shapes *[]string)(err error){
 
 func (m InkMiner) GetChildren(blockHash string, children *[]string)(err error){
 	// TODO
+	var found bool = false
+	var res []string
+	// First assert that blockhash exists in blockchain
+	// Then recursively look for child
+	currentHash := blockHash
+	fmt.Println(len(BlockchainRef.Blocks))
+	for i:= 0 ; i < len(BlockchainRef.Blocks) ; i++ {
+		fmt.Println(BlockchainRef.Blocks[i].PrevBlockHash)
+		if BlockchainRef.Blocks[i].PrevBlockHash == currentHash {
+			if !found{
+				// found first block
+				found = true
+			}
+			res = append(res, BlockchainRef.Blocks[i].Hash)
+			currentHash = BlockchainRef.Blocks[i].Hash
+			i = 0														// start searching again from beginning
+		}
+	}
+
+	if !found{
+		// passed blockHash not found in blockchain
+		return blockartlib.InvalidBlockHashError(blockHash)
+	}
+	*children = res
 	return nil
 }
 
@@ -845,6 +869,11 @@ func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResp
 	Ink = Ink - args.InkRequired
 	*reply = shared.AddShapeResponse{InkRemaining: Ink}
 
+	return nil
+}
+
+func (m InkMiner) DeleteShape(args *shared.DeleteShapeInfo, reply *shared.DeleteShapeInfo)(err error){
+	// need to add another block to block chain
 	return nil
 }
 
