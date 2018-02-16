@@ -464,7 +464,8 @@ func ConnectServer(serverAddr string) {
 	} else {
 		//TODO do some shit to get the actual blocks
 		// TODO ask for the missing blocks from
-		getLongestChain()
+		BlockchainRef = getChainFromMiner()
+		//getLongestChain()
 	}
 
 	// start mining noop blocks
@@ -996,6 +997,23 @@ func updateInk(block *Block) {
 	}
 	// Else add ink to miner that mined block
 	inkMap[pubKey] = minerInk + Settings.InkPerNoOpBlock
+}
+
+type ChainContainer struct {
+	Blockchain *Blockchain
+}
+
+func getChainFromMiner() *Blockchain {
+	var struc ChainContainer
+	for k := range connectedMiners.Miners {
+		connectedMiners.Miners[k].MinerConn.Call("InkMiner.GetChain", &struc, &struc)
+	}
+	return struc.Blockchain
+}
+
+func (m InkMiner) GetChain(args *ChainContainer, reply *ChainContainer) error {
+	reply.Blockchain = BlockchainRef
+	return nil
 }
 
 // Get longest chain from connected miners
