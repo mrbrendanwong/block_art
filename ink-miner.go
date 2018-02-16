@@ -46,7 +46,7 @@ var (
 	LocalAddr     net.Addr
 	Settings      MinerNetSettings
 	BlockchainRef *Blockchain
-	Ink           uint32
+	inkMap        map[string]uint32 // map pubkeyminer to inkremaining
 	// Error logging
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
@@ -131,14 +131,14 @@ type Op struct {
 	ShapeOpSig string
 	// PubKeyArtNode is the public key of the artnode that generated the op
 	PubKeyArtNode string
+	// InkRequired is the amount of ink required for this op
+	InkRequired uint32
 }
 
 // Block represents a block in the blockchain, contains transactions and metadata
 type Block struct {
 	// Depth is the position of the block within the blockchain
 	Depth uint32
-	// Parent block
-	Parent *Block
 	// Transactions are the list of transactions the block performs
 	Ops []*Op
 	// PrevBlockHash is the hash of the previous block
@@ -149,12 +149,11 @@ type Block struct {
 	PubKeyMiner ecdsa.PublicKey
 	// Nonce is a 32-bit unsigned integer nonce
 	Nonce string
-	// Ink is the amount of ink the miner associated with pubkeyminer has
-	Ink uint32
 }
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
+	sync.RWMutex
 	Blocks    []*Block
 	LastBlock *Block
 }
@@ -204,9 +203,7 @@ type ArtNodeInfo struct {
 func NewBlock(prevBlock Block, hash string, nonce string) *Block {
 	block := &Block{
 		Depth:       prevBlock.Depth + 1,
-		Parent:      &prevBlock,
 		PubKeyMiner: PubKey,
-		Ink:         Ink,
 		// Ops:
 		PrevBlockHash: prevBlock.Hash,
 		Hash:          hash,
@@ -219,7 +216,6 @@ func NewBlock(prevBlock Block, hash string, nonce string) *Block {
 func NewGenesisBlock() *Block {
 	block := &Block{
 		Hash:          config.GenesisBlockHash,
-		Ink:           0,
 		Depth:         0,
 		PrevBlockHash: "",
 	}
@@ -278,7 +274,8 @@ func ConnectServer(serverAddr string) {
 	ln, err := net.Listen("tcp", localAddr)
 	LocalAddr = ln.Addr()
 
-	Ink = 10
+	pubKeyString := pubKeyToString(PubKey)
+	inkMap[pubKeyString] = 10
 
 	Server, err = rpc.Dial("tcp", serverAddr)
 	if err != nil {
@@ -496,44 +493,78 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 	return nil
 }
 
-// Validate received block
+// Validate received block, also check longest path
 func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
 	// Send signal to channel that block was received
 	recvBlockChannel <- 1
 
 	// Turn json string into struct
 	var block Block
-	err = json.Unmarshal(args.BlockString, block)
+	err = json.Unmarshal([]byte(args.BlockString), block)
+	if err != nil {
+		outLog.Printf("Couldn't unmarshal block string:%s\n", err)
+	}
 
 	// Check that block hasn't been repeated, check from end first
-	for i := 0; i <= len(BlockchainRef.Blocks); i++ {
+	BlockchainRef.Lock()
+	for i := 0; i < len(BlockchainRef.Blocks); i++ {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
+			validationComplete <- 1
+			BlockchainRef.Unlock()
 			return errors.New("Repeated block")
+		}
+	}
+	BlockchainRef.Unlock()
+
+	// Check depth of received block
+	BlockchainRef.Lock()
+	depth := BlockchainRef.LastBlock.Depth
+	BlockchainRef.Unlock()
+
+	if depth >= block.Depth {
+		validationComplete <- 1
+		return errors.New("Block is not addition to longest chain")
+	} else {
+		// If depth difference greater than 1 then get longest chain from neighbours
+		if (block.Depth - depth) > 1 {
+			// Get longest chain
+			getLongestChain()
 		}
 	}
 
 	// Check that nonce is correct
 	err = checkNonce(&block)
 	if err != nil {
+		validationComplete <- 1
 		return errors.New("Bad nonce")
 	}
 
 	// Check for valid signature
 	err = checkValidSignature(&block)
+	if err != nil {
+		validationComplete <- 1
+		return errors.New("Bad signature")
+	}
 
 	// Check if valid parent
 	err = checkValidParent(&block)
+	if err != nil {
+		validationComplete <- 1
+		return errors.New("Bad parent")
+	}
 
 	// Add to blockchain, update last block
+	BlockchainRef.Lock()
 	BlockchainRef.Blocks = append(BlockchainRef.Blocks, &block)
 	BlockchainRef.LastBlock = &block
+	BlockchainRef.Unlock()
 
-	//TODO:
 	// Update ink amounts
+	updateInk(&block)
 
-	//TODO:
 	// Send block to connected miners
+	sendBlock(&block)
 
 	// Send signal to channel that block validation is complete
 	validationComplete <- 1
@@ -592,7 +623,6 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 func stringToPubKey(pubString string) *ecdsa.PublicKey {
 	pKey, _ := hex.DecodeString(pubString)
 	decodedKey, _ := x509.ParsePKIXPublicKey(pKey)
-
 	key := decodedKey.(*ecdsa.PublicKey)
 	return key
 }
@@ -609,8 +639,8 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
 	// vars needed to create noop block
-	var depth, ink uint32
-	var prevBlockHash, nonce, hash string
+	var depth uint32
+	var prevBlockHash, nonce, hash, pubKeyString string
 
 	// Channels
 	opChannel = make(chan int, 3)
@@ -629,9 +659,10 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
+			BlockchainRef.Lock()
 			lastBlock := BlockchainRef.LastBlock
+			BlockchainRef.Unlock()
 			depth = lastBlock.Depth
-			ink = lastBlock.Ink
 			prevBlockHash = lastBlock.Hash
 		}
 		select {
@@ -643,7 +674,7 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
-			pubKeyString := pubKeyToString(PubKey)
+			pubKeyString = pubKeyToString(PubKey)
 			contents := fmt.Sprintf("%s%s", prevBlockHash, pubKeyString)
 			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
@@ -662,21 +693,25 @@ func startMining() {
 				PrevBlockHash: prevBlockHash,
 				PubKeyMiner:   PubKey,
 				Nonce:         nonce,
-				Ink:           ink + Settings.InkPerNoOpBlock,
 			}
 			sendBlock(block)
-			//append(BlockchainRef.Blocks, block)
-			Ink += Settings.InkPerNoOpBlock
+			BlockchainRef.Lock()
+			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
+			BlockchainRef.Unlock()
+			ink := inkMap[pubKeyString]
+			inkMap[pubKeyString] = (ink + Settings.InkPerNoOpBlock)
 
 			// Update last block
+			BlockchainRef.Lock()
 			BlockchainRef.LastBlock = block
+			BlockchainRef.Unlock()
 		}
 	}
 }
 
 // Return false if nonce validation fails
 // Return nonce and hash made with nonce that has required 0s
-func getNonce(blockHash string, difficulty int64) (string, string) {
+func getNonce(blockHash string, difficulty uint8) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
 
@@ -743,8 +778,8 @@ func checkNonce(block *Block) error {
 func checkValidSignature(block *Block) error {
 	ops := block.Ops
 	for i := 0; i <= len(block.Ops); i++ {
-		pkey := ops[i].PubKeyArtNode
-		if !ecdsa.Verify(pkey, ops[i].ShapeOpSig, pkey.X, pkey.Y) {
+		pkey := stringToPubKey(ops[i].PubKeyArtNode)
+		if !ecdsa.Verify(pkey, []byte(ops[i].ShapeOpSig), pkey.X, pkey.Y) {
 			return errors.New("Op signature does not match")
 		}
 	}
@@ -754,11 +789,14 @@ func checkValidSignature(block *Block) error {
 
 // Return error if block does not have valid parent in blockchain
 func checkValidParent(block *Block) error {
+	BlockchainRef.Lock()
 	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
-		if block.PrevBlockHash == BlockchainRef.Blocks.Hash {
+		if block.PrevBlockHash == BlockchainRef.Blocks[i].Hash {
+			BlockchainRef.Unlock()
 			return nil
 		}
 	}
+	BlockchainRef.Unlock()
 	return errors.New("Parent does not exist")
 }
 
@@ -768,11 +806,57 @@ func sendBlock(block *Block) {
 	if err != nil {
 		outLog.Printf("Error marshalling block into string:%s\n", err)
 	}
-	var m []string
+
 	var reply *bool
-	for _, miner := range connectedMiners.Miners {
-		miner.MinerConn.Call("InkMiner.ValidateBlock", b, reply)
+	for _, value := range connectedMiners.Miners {
+		value.MinerConn.Call("InkMiner.ValidateBlock", b, reply)
 	}
+}
+
+// Update ink amounts of miners
+func updateInk(block *Block) {
+	pubKey := pubKeyToString(block.PubKeyMiner)
+	minerInk := inkMap[pubKey]
+
+	// If ops exist, credit and debit ink to miners
+	for i := 0; i < len(block.Ops); i++ {
+		OpMinerInk := inkMap[block.Ops[i].PubKeyArtNode]
+		inkMap[block.Ops[i].PubKeyArtNode] = OpMinerInk - block.Ops[i].InkRequired
+		inkMap[pubKey] = minerInk + Settings.InkPerOpBlock
+		return
+	}
+	// Else add ink to miner that mined block
+	inkMap[pubKey] = minerInk + Settings.InkPerNoOpBlock
+}
+
+// Get longest chain from connected miners
+func getLongestChain() {
+	depth := uint32(0)
+	var conn *rpc.Client
+
+	for _, value := range connectedMiners.Miners {
+		var reply shared.BlockArgs
+		var b *Block
+		value.MinerConn.Call("InkMiner.getLatestBlock", &reply, &reply)
+		err := json.Unmarshal([]byte(reply.BlockString), b)
+		if err != nil {
+			outLog.Printf("Error unmarshalling latest block")
+		}
+		if b.Depth > depth {
+			depth = b.Depth
+			conn = value.MinerConn
+		}
+	}
+
+	// TODO
+	// Get map of index:hash
+	var reply shared.BlockArgs
+
+	conn.Call("InkMiner.getChain", &reply, &reply)
+
+	// Compare hashes starting from end of map
+	// Remove differing block
+	// Go through index and get single blocks
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -788,18 +872,37 @@ func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)
 	return nil
 }
 
+/* Changed data structure - does not apply
 func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
 	*reply = shared.Reply{InkRemaining: Ink}
 	return nil
 }
 
+
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
 
 	// todo when should ink actually be updated?
-	Ink = Ink - args.InkRequired
+	Ink = Ink - args.InkRequired //No longer have Ink, stored in inkMap
 	*reply = shared.AddShapeResponse{InkRemaining: Ink}
 
+	return nil
+}
+*/
+
+// Return block with largest depth
+func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+	BlockchainRef.Lock()
+	block := BlockchainRef.LastBlock
+	BlockchainRef.Unlock()
+	blockstring, _ := json.Marshal(block)
+	reply.BlockString = string(blockstring)
+	return nil
+}
+
+// TODO
+// Get map of longest chain, with index of blockchain:hash
+func (m InkMiner) getChain(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
 	return nil
 }
 
@@ -807,7 +910,7 @@ func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResp
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////
 
-func decodePPKeys(encodedPriv string, encodedPub string) (privKey *ecdsa.PrivateKey, pubKey *ecdsa.PublicKey){
+func decodePPKeys(encodedPriv string, encodedPub string) (privKey *ecdsa.PrivateKey, pubKey *ecdsa.PublicKey) {
 	// Decode strings to byte arrays
 	decodedPriv, _ := hex.DecodeString(encodedPriv)
 	decidedPub, _ := hex.DecodeString(encodedPub)
@@ -831,7 +934,7 @@ func main() {
 		return
 	}
 	serverAddr := args[1]
-	pubKeyString  := args[2]
+	pubKeyString := args[2]
 	privKeyString := args[3]
 
 	fmt.Println("Here is the private key string: ", privKeyString)
@@ -844,9 +947,14 @@ func main() {
 
 	ConnectServer(serverAddr)
 
-	// if sole miner, create blockchain
-
-	BlockchainRef = NewBlockchain()
-
-	// else request blockchain from other miners
+	// if sole miner, create blockchain; else request blockchain from other miners
+	if len(connectedMiners.Miners) == 0 {
+		BlockchainRef.Lock()
+		BlockchainRef = NewBlockchain()
+		BlockchainRef.Unlock()
+	} else {
+		//TODO do some shit to get the actual blocks
+		// TODO ask for the missing blocks from
+		getLongestChain()
+	}
 }
