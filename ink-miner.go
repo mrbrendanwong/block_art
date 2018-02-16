@@ -515,26 +515,31 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	}
 
 	// Check that block hasn't been repeated, check from end first
+	BlockchainRef.Lock()
 	for i := range len(BlockchainRef.Blocks) {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
 			validationComplete <- 1
+			BlockchainRef.Unlock()
 			return errors.New("Repeated block")
 		}
 	}
+	BlockchainRef.Unlock()
 
 	// Check depth of received block
-	if BlockchainRef.LastBlock.Depth >= block.Depth {
+	BlockchainRef.Lock()
+	depth := BlockchainRef.LastBlock.Depth
+	BlockchainRef.Unlock()
+
+	if depth >= block.Depth {
 		validationComplete <- 1
 		return errors.New("Block is not addition to longest chain")
 	} else {
 		// If depth difference greater than 1 then get longest chain from neighbours
-		if (block.Depth - BlockchainRef.LastBlock.Depth) > 1 {
+		if (block.Depth - depth) > 1 {
 			// Get longest chain
 			getLongestChain()
 			// TODO
-			// Remove blocks and debit ink
-			// Get blocks needed from other miners
 		}
 	}
 
@@ -560,8 +565,10 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	}
 
 	// Add to blockchain, update last block
+	BlockchainRef.Lock()
 	BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 	BlockchainRef.LastBlock = block
+	BlockchainRef.Unlock()
 
 	// Update ink amounts
 	updateInk(block)
@@ -659,7 +666,9 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
+			BlockchainRef.Lock()
 			lastBlock := BlockchainRef.LastBlock
+			BlockchainRef.Unlock()
 			depth = lastBlock.Depth
 			ink = lastBlock.Ink
 			prevBlockHash = lastBlock.Hash
@@ -695,11 +704,16 @@ func startMining() {
 				Ink:           ink + Settings.InkPerNoOpBlock,
 			}
 			sendBlock(block)
+			BlockchainRef.Lock()
 			append(BlockchainRef.Blocks, block)
-			Ink += Settings.InkPerNoOpBlock
+			BlockchainRef.Unlock()
+			ink := inkMap[pubKeyString]
+			inkMap[pubKeyString] = (ink + Settings.InkPerNoOpBlock)
 
 			// Update last block
+			BlockchainRef.Lock()
 			BlockchainRef.LastBlock = block
+			BlockchainRef.Unlock()
 		}
 	}
 }
@@ -782,11 +796,14 @@ func checkValidSignature(block *Block) error {
 
 // Return error if block does not have valid parent in blockchain
 func checkValidParent(block *Block) error {
+	BlockchainRef.Lock()
 	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
 		if block.PrevBlockHash == BlockchainRef.Blocks.Hash {
+			BlockchainRef.Unlock()
 			return nil
 		}
 	}
+	BlockchainRef.Unlock()
 	return errors.New("Parent does not exist")
 }
 
@@ -798,7 +815,7 @@ func sendBlock(block *Block) {
 	}
 	var m []string
 	var reply *bool
-	for _, value := range connectedMiners.miners {
+	for _, value := range connectedMiners.Miners {
 		value.MinerConn.Call("InkMiner.ValidateBlock", b, reply)
 	}
 }
@@ -820,13 +837,23 @@ func updateInk(block *Block) {
 	}
 }
 
-// Get longest chain from connected miners
-func getLongestChain() {
+// Get longest chain from connected miners, credit and debit ink
+func getLongestChain() *Blockchain {
 	//TODO
 	// Get the last block from all the miners
+	depthMap := make(map[*rpc.Client]uint32)
+
+	var reply shared.BlockArgs
+	for _, value := range connectedMiners.miners {
+		var b *Block
+		value.MinerConn.Call("InkMiner.getDepth", &reply, &reply)
+		err := json.Unmarshal(reply.BlockString, b)
+
+	}
 
 	// Compare the depth of the last block and choose biggest
 	// Get all blocks from that miner
+	//
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -877,8 +904,13 @@ func main() {
 
 	// if sole miner, create blockchain; else request blockchain from other miners
 	if BlockchainRef == nil {
+		BlockchainRef.Lock()
 		BlockchainRef = NewBlockchain()
+		BlockchainRef.Unlock()
 	} else {
-		BlockchainRef = getLongestChain()
+		bchain := getLongestChain()
+		BlockchainRef.Lock()
+		BlockchainRef = bchain
+		BlockchainRef.Unlock()
 	}
 }
