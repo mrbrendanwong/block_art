@@ -801,13 +801,13 @@ func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error){
 }
 
 // Returns Svg string to corresponding shape
-func (m InkMiner) GetSvgString(shapeHash string, svgString *string)(err error){
+func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp)(err error){
 	BlockchainRef.RLock()
 	for i := range BlockchainRef.Blocks {
 		ops := BlockchainRef.Blocks[i].Ops
 		for j:= range ops {
 			if ops[j].ShapeOpSig == shapeHash {
-				*svgString = ops[j].ShapeOp.ShapeSvgString
+				*shape = ops[j].ShapeOp
 				BlockchainRef.RUnlock()
 				return nil
 			}

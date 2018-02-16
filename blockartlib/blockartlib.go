@@ -12,13 +12,11 @@ import "../shared"
 import (
 	"fmt"
 	"net/rpc"
-	"sync"
 	"os"
 	"strconv"
 	"math"
 	"regexp"
 	"strings"
-	"time"
 	"log"
 )
 
@@ -208,12 +206,6 @@ type ArtNode struct{
 	connected 	bool
 }
 
-type CanvasInstance struct{
-	sync.RWMutex
-	canvas 		[][]bool
-	//file 		*os.File
-}
-
 type Coordinates struct {
 	x int
 	y int
@@ -221,7 +213,6 @@ type Coordinates struct {
 
 var (
 	initiated bool
-	BACanvas  *CanvasInstance
 	Settings  CanvasSettings
 )
 
@@ -288,13 +279,6 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-
-	// Check that shape does not overlap any existing shape
-	isValid := isValidShape(*shape)
-	if !isValid{
-		return "", "", 0, InvalidShapeSvgStringError("")
-	}
-
 	addShapeInfo := &shared.AddShapeInfo{
 		ValidateNum: validateNum,
 		InkRequired: InkRequired,
@@ -315,11 +299,18 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 }
 
 func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
-	err = a.Miner.Call("InkMiner.GetSvgString", shapeHash, &svgString)
+	if !a.connected {
+		return "", DisconnectedError("")
+	}
+
+	var shape shared.ShapeOp
+	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
 	if err != nil {
 		handleError("Could not retrieve svg string.", err)
 		return "", err
 	}
+
+	svgString = "<path d=\"" + shape.ShapeSvgString + "\" fill=\"" + shape.Fill + "\" stroke=\"" + shape.Stroke + "\"/>\n</svg>"
 
 	return svgString, nil
 }
@@ -387,21 +378,46 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 	// Get inkRemaining from miner
 	inkRemaining, err = a.GetInk()
 
-	// Create and write to HTML file
-	filename := BA_FILE + "_" + time.Now().String()
-	file, err := os.OpenFile(filename, os.O_CREATE | os.O_WRONLY, 0664)
-	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n</svg>"))
-	//TODO:
-	// write SVG string of every block in chain
-	file.Write([]byte("</svg>"))
-	file.Close()
-	fmt.Println("Canvas can be seen at ", filename)
+
+	var allShapes		 []string
+	var allSvgStrings	 []string
+
+	genesisBlock, err := a.GetGenesisBlock()
+	allBlocks, err := a.GetChildren(genesisBlock)		// returns hashes of all children
+	for _, blockHash := range allBlocks {
+		shapes, _ := a.GetShapes(blockHash)
+		for _,shape := range shapes {
+			allShapes = append(allShapes, shape)
+		}
+	}
+
+	for _, shapeHash := range allShapes {
+		svgString, _ := a.GetSvgString(shapeHash)
+		allSvgStrings = append(allSvgStrings, svgString)
+	}
+
+	drawCanvas(allSvgStrings)
 
 	// Close connection to miner
 	a.Miner.Close()
 	a.connected = false						// Mark as no longer connected
 
 	return 0, nil // Return no ink remaining for now
+}
+
+//// This function draws the canvas to a HTML file
+func drawCanvas( allStrings []string )( err error ){
+	//Create and write to HTML file
+	file, err := os.OpenFile(BA_FILE, os.O_CREATE | os.O_WRONLY, 0664)
+	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n</svg>"))
+	//TODO:
+	// write SVG string of every block in chain
+	for _, str := range allStrings{
+		file.Write([]byte(str))
+	}
+	file.Write([]byte("</svg>"))
+	file.Close()
+	fmt.Println("Canvas can be seen at ", BA_FILE)
 }
 
 // This function returns the list of vertices contained in the SVG string
@@ -486,22 +502,7 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error){
 	return points, nil
 }
 
-// This function checks that the given shape does not overlap any existing shapes
-func isValidShape(shape shared.Shape)(valid bool){
-	// TODO:
-	// NO SUCH THING AS AN OVERLAP FOR NOW
-	return true
-}
 
-// This function draws the given shape to HTML file
-//func drawShape(shapeSvgString string, fill string, stroke string){
-//	f := BACanvas.file
-//	ptr, err := f.Seek(-int64(len("</svg>")),2)
-//	if err != nil{
-//		fmt.Println("ERROR",err)
-//	}
-//	f.WriteAt([]byte("<path d=\"" + shapeSvgString + "\" fill=\"" + fill + "\" stroke=\"" + stroke + "\"/>\n</svg>"), ptr)
-//}
 // The constructor for a new Canvas object instance. Takes the miner's
 // IP:port address string and a public-private key pair (ecdsa private
 // key type contains the public key). Returns a Canvas instance that
@@ -548,11 +549,10 @@ func createCanvas(x int, y int){
 		grid[i] = make([]bool, x)
 	}
 
-	BACanvas = &CanvasInstance{canvas: grid}
 }
 
 func handleError(msg string, e error) {
 	if e != nil {
-		errLog.Println("%s, err = %s\n", msg, e.Error())
+		errLog.Println(msg, e.Error())
 	}
 }
