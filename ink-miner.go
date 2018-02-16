@@ -145,7 +145,7 @@ type Block struct {
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
-	sync.RWMutex
+	lock      sync.RWMutex
 	Blocks    []*Block
 	LastBlock *Block
 }
@@ -276,9 +276,9 @@ func receiveOp(op *shared.Op) {
 		}
 	default:
 		// get leaf info
-		BlockchainRef.Lock()
+		BlockchainRef.lock.Lock()
 		lastBlock := BlockchainRef.LastBlock
-		BlockchainRef.Unlock()
+		BlockchainRef.lock.Unlock()
 		depth = lastBlock.Depth
 		prevBlockHash = lastBlock.Hash
 	}
@@ -314,16 +314,16 @@ func receiveOp(op *shared.Op) {
 			Nonce:         nonce,
 		}
 		sendBlock(block)
-		BlockchainRef.Lock()
+		BlockchainRef.lock.Lock()
 		BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
-		BlockchainRef.Unlock()
+		BlockchainRef.lock.Unlock()
 		ink := inkMap[pKeyString]
 		inkMap[pKeyString] = (ink + Settings.InkPerOpBlock)
 
 		// Update last block
-		BlockchainRef.Lock()
+		BlockchainRef.lock.Lock()
 		BlockchainRef.LastBlock = block
-		BlockchainRef.Unlock()
+		BlockchainRef.lock.Unlock()
 		// can now stop working on op
 		opComplete <- 1
 	}
@@ -464,7 +464,9 @@ func ConnectServer(serverAddr string) {
 	} else {
 		//TODO do some shit to get the actual blocks
 		// TODO ask for the missing blocks from
-		BlockchainRef = getChainFromMiner()
+		fmt.Println("ASKING FOR CHAIN FROM MINER")
+		getChainFromMiner()
+		fmt.Printf("GOT CHAIN FROM MINER SIZE:%d\n", len(BlockchainRef.Blocks))
 		//getLongestChain()
 	}
 
@@ -667,21 +669,21 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	}
 
 	// Check that block hasn't been repeated, check from end first
-	BlockchainRef.Lock()
+	BlockchainRef.lock.Lock()
 	for i := 0; i < len(BlockchainRef.Blocks); i++ {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
 			validationComplete <- block
-			BlockchainRef.Unlock()
+			BlockchainRef.lock.Unlock()
 			return errors.New("Repeated block")
 		}
 	}
-	BlockchainRef.Unlock()
+	BlockchainRef.lock.Unlock()
 
 	// Check depth of received block
-	BlockchainRef.Lock()
+	BlockchainRef.lock.Lock()
 	depth := BlockchainRef.LastBlock.Depth
-	BlockchainRef.Unlock()
+	BlockchainRef.lock.Unlock()
 
 	if depth >= block.Depth {
 		validationComplete <- block
@@ -716,10 +718,10 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	}
 
 	// Add to blockchain, update last block
-	BlockchainRef.Lock()
+	BlockchainRef.lock.Lock()
 	BlockchainRef.Blocks = append(BlockchainRef.Blocks, &block)
 	BlockchainRef.LastBlock = &block
-	BlockchainRef.Unlock()
+	BlockchainRef.lock.Unlock()
 
 	// Update ink amounts
 	updateInk(&block)
@@ -827,9 +829,10 @@ func startMining() {
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
-			BlockchainRef.Lock()
+			fmt.Printf("Size of blockchain:%d\n", len(BlockchainRef.Blocks))
+			BlockchainRef.lock.Lock()
 			lastBlock := BlockchainRef.LastBlock
-			BlockchainRef.Unlock()
+			BlockchainRef.lock.Unlock()
 			depth = lastBlock.Depth
 			prevBlockHash = lastBlock.Hash
 		}
@@ -863,17 +866,17 @@ func startMining() {
 				Nonce:         nonce,
 			}
 			sendBlock(block)
-			BlockchainRef.Lock()
+			BlockchainRef.lock.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
-			BlockchainRef.Unlock()
+			BlockchainRef.lock.Unlock()
 			fmt.Println("ADDING NOOP BLOCK")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 
 			// Update last block
-			BlockchainRef.Lock()
+			BlockchainRef.lock.Lock()
 			BlockchainRef.LastBlock = block
-			BlockchainRef.Unlock()
+			BlockchainRef.lock.Unlock()
 		}
 	}
 }
@@ -959,14 +962,14 @@ func checkValidSignature(block *Block) error {
 
 // Return error if block does not have valid parent in blockchain
 func checkValidParent(block *Block) error {
-	BlockchainRef.Lock()
+	BlockchainRef.lock.Lock()
 	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
 		if block.PrevBlockHash == BlockchainRef.Blocks[i].Hash {
-			BlockchainRef.Unlock()
+			BlockchainRef.lock.Unlock()
 			return nil
 		}
 	}
-	BlockchainRef.Unlock()
+	BlockchainRef.lock.Unlock()
 	return errors.New("Parent does not exist")
 }
 
@@ -1003,15 +1006,20 @@ type ChainContainer struct {
 	Blockchain *Blockchain
 }
 
-func getChainFromMiner() *Blockchain {
+// get chain from first miner
+func getChainFromMiner() {
 	var struc ChainContainer
 	for k := range connectedMiners.Miners {
-		connectedMiners.Miners[k].MinerConn.Call("InkMiner.GetChain", &struc, &struc)
+		err := connectedMiners.Miners[k].MinerConn.Call("InkMiner.GetChain", &struc, &struc)
+		if err != nil {
+			fmt.Println(err)
+		}
 	}
-	return struc.Blockchain
+	BlockchainRef = struc.Blockchain
 }
 
 func (m InkMiner) GetChain(args *ChainContainer, reply *ChainContainer) error {
+	fmt.Printf("Sending chain of size: %d\n", len(BlockchainRef.Blocks))
 	reply.Blockchain = BlockchainRef
 	return nil
 }
@@ -1080,9 +1088,9 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 
 // Return block with largest depth
 func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
-	BlockchainRef.Lock()
+	BlockchainRef.lock.Lock()
 	block := BlockchainRef.LastBlock
-	BlockchainRef.Unlock()
+	BlockchainRef.lock.Unlock()
 	blockstring, _ := json.Marshal(block)
 	reply.BlockString = string(blockstring)
 	return nil
