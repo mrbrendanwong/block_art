@@ -10,14 +10,16 @@ package blockartlib
 import "crypto/ecdsa"
 import "../shared"
 import (
+	"crypto/x509"
+	"encoding/hex"
 	"fmt"
+	"log"
 	"math"
 	"net/rpc"
 	"os"
 	"regexp"
 	"strconv"
 	"strings"
-	"log"
 )
 
 const (
@@ -31,8 +33,7 @@ const (
 var (
 	Miner     *rpc.Client
 	minerAddr string
-	errLog *log.Logger = log.New(os.Stderr, "[artnode] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
-
+	errLog    *log.Logger = log.New(os.Stderr, "[artnode] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 )
 
 const SVGSTRING_MAXLEN = 128
@@ -277,7 +278,6 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-
 	addShapeInfo := &shared.AddShapeInfo{
 		ValidateNum: validateNum,
 		InkRequired: InkRequired,
@@ -291,7 +291,6 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, addShapeResponse.Err
 	}
 
-
 	fmt.Printf("InkRemaining after drawing shape:%d\n", addShapeResponse.InkRemaining)
 
 	return "", "", addShapeResponse.InkRemaining, nil
@@ -302,14 +301,14 @@ func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 		return "", DisconnectedError("")
 	}
 
-	var shape shared.ShapeOp
+	var shape shared.Shape
 	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
 	if err != nil {
 		handleError("Could not retrieve svg string.", err)
 		return "", err
 	}
 
-	svgString = "<path d=\"" + shape.ShapeSvgString + "\" fill=\"" + shape.Fill + "\" stroke=\"" + shape.Stroke + "\"/>\n</svg>"
+	svgString = "<path d=\"" + shape.ShapeSvgString + "\" fill=\"" + shape.Fill + "\" stroke=\"" + shape.Stroke + "\"/>\n"
 
 	return svgString, nil
 }
@@ -327,7 +326,68 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 }
 
 func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
-
+	//	if !a.connected {
+	//		return 0, DisconnectedError("")
+	//	}
+	//
+	//	var shape shared.Shape
+	//	var newShape shared.Shape
+	//	// Get shape from block chain
+	//	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
+	//	if err != nil {
+	//		handleError("Could not delete shape.", err)
+	//		return 0, err
+	//	}
+	//	if shape.Fill != "transparent"{
+	//		// Create new shape
+	//		newShape = shared.Shape{
+	//			shape.ShapeType,
+	//			shape.ShapeSvgString,
+	//			"white",
+	//			"white",
+	//		}
+	//	} else {
+	//		// Create new shape
+	//		newShape = shared.Shape{
+	//			shape.ShapeType,
+	//			shape.ShapeSvgString,
+	//			shape.Fill,
+	//			shape.Stroke,
+	//		}
+	//	}
+	//
+	//	// Sign the shape op
+	//	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
+	//	shapeOpSig := &shared.ShapeOpSig{
+	//		R: r,
+	//		S: s,
+	//	}
+	//	if err != nil {
+	//		fmt.Println()
+	//	}
+	//	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
+	//	encodedBytes := hex.EncodeToString(pubKeyBytes)
+	//
+	//	// Create new shape op
+	//	op := &shared.Op{
+	//		ShapeOpSig:    *shapeOpSig,
+	//		ValidateNum:   validateNum,
+	//		InkRequired:   0,
+	//		ShapeOp:       newShape,
+	//		PubKeyArtNode: encodedBytes,
+	//	}
+	//
+	//	var response shared.AddShapeResponse
+	//	err = a.Miner.Call("InkMiner.AddShape", op, &response)
+	//
+	//	// TODO fix error handling
+	//	if response.Err != nil {
+	//		return 0, response.Err
+	//	}
+	//
+	//	fmt.Printf("InkRemaining after drawing shape:%d\n", response.InkRemaining)
+	//
+	//	return response.InkRemaining, nil
 	return 0, nil
 }
 
@@ -346,10 +406,10 @@ func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
 // Get hash of the first block of the block chain
 func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 	if !a.connected {
-		return "" , DisconnectedError("")
+		return "", DisconnectedError("")
 	}
 	err = a.Miner.Call("InkMiner.GetGenesisBlock", "", &blockHash)
-	if err != nil{
+	if err != nil {
 		handleError("Error getting genesis block", err)
 		return "", err
 	}
@@ -357,7 +417,7 @@ func (a ArtNode) GetGenesisBlock() (blockHash string, err error) {
 }
 
 func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error) {
-	if !a.connected{
+	if !a.connected {
 		return nil, DisconnectedError("")
 	}
 
@@ -370,22 +430,21 @@ func (a ArtNode) GetChildren(blockHash string) (blockHashes []string, err error)
 }
 
 // Close connection between art node and canvas
-func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
+func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error) {
 	if !a.connected {
 		return 0, DisconnectedError("")
 	}
 	// Get inkRemaining from miner
 	inkRemaining, err = a.GetInk()
 
-
-	var allShapes		 []string
-	var allSvgStrings	 []string
+	var allShapes []string
+	var allSvgStrings []string
 
 	genesisBlock, err := a.GetGenesisBlock()
-	allBlocks, err := a.GetChildren(genesisBlock)		// returns hashes of all children
+	allBlocks, err := a.GetChildren(genesisBlock) // returns hashes of all children
 	for _, blockHash := range allBlocks {
 		shapes, _ := a.GetShapes(blockHash)
-		for _,shape := range shapes {
+		for _, shape := range shapes {
 			allShapes = append(allShapes, shape)
 		}
 	}
@@ -405,18 +464,17 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error){
 }
 
 //// This function draws the canvas to a HTML file
-func drawCanvas( allStrings []string )( err error ){
+func drawCanvas(allStrings []string) (err error) {
 	//Create and write to HTML file
-	file, err := os.OpenFile(BA_FILE, os.O_CREATE | os.O_WRONLY, 0664)
+	file, err := os.OpenFile(BA_FILE, os.O_CREATE|os.O_WRONLY, 0664)
 	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n</svg>"))
-	//TODO:
-	// write SVG string of every block in chain
-	for _, str := range allStrings{
+	for _, str := range allStrings {
 		file.Write([]byte(str))
 	}
 	file.Write([]byte("</svg>"))
 	file.Close()
 	fmt.Println("Canvas can be seen at ", BA_FILE)
+	return nil
 }
 
 // This function returns the list of vertices contained in the SVG string
@@ -452,7 +510,6 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error) {
 			tmp, _ = strconv.ParseInt(args[2], 0, 8)
 			y_current = math.Abs(float64(tmp))
 
-
 		} else if args[0] == "l" {
 			// Draw line from current pos to given pos
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
@@ -470,7 +527,6 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error) {
 			// Draw horizontal line from current pos to given pos
 			tmp, _ = strconv.ParseInt(args[1], 0, 8)
 			x_current = math.Abs(float64(tmp) + x_current)
-
 
 		} else if args[0] == "V" {
 			// Draw vertical line from start pos to given pos
@@ -499,23 +555,6 @@ func getVertices(shapeSVGString string) (vertices []Coordinates, err error) {
 		points = append(points, Coordinates{int(x_current), int(y_current)})
 	}
 	return points, nil
-}
-
-// This function checks that the given shape does not overlap any existing shapes
-func isValidShape(shape shared.Shape) (valid bool) {
-	// TODO:
-	// NO SUCH THING AS AN OVERLAP FOR NOW
-	return true
-}
-
-// This function draws the given shape to HTML file
-func drawShape(shapeSvgString string, fill string, stroke string) {
-	f := BACanvas.file
-	ptr, err := f.Seek(-int64(len("</svg>")), 2)
-	if err != nil {
-		fmt.Println("ERROR", err)
-	}
-	f.WriteAt([]byte("<path d=\""+shapeSvgString+"\" fill=\""+fill+"\" stroke=\""+stroke+"\"/>\n</svg>"), ptr)
 }
 
 // The constructor for a new Canvas object instance. Takes the miner's
