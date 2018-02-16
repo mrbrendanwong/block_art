@@ -52,7 +52,7 @@ var (
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 
 	// Connected miners
-	connectedMiners ConnectedMiners = ConnectedMiners{miners: make(map[string]*Miner)}
+	connectedMiners ConnectedMiners = ConnectedMiners{Miners: make(map[string]*Miner)}
 
 	// Channel to signal incoming ops, blocks
 	opChannel          chan int // int is a placeholder -> may be an op string later
@@ -202,7 +202,6 @@ type ArtNodeInfo struct {
 func NewBlock(prevBlock Block, hash string, nonce string) *Block {
 	block := &Block{
 		Depth:       prevBlock.Depth + 1,
-		Parent:      &prevBlock,
 		PubKeyMiner: PubKey,
 		Ink:         Ink,
 		// Ops:
@@ -538,9 +537,7 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 		// If depth difference greater than 1 then get longest chain from neighbours
 		if (block.Depth - depth) > 1 {
 			// Get longest chain
-			BlockchainRef.Lock()
 			getLongestChain()
-			BlockchainRef.Unlock()
 		}
 	}
 
@@ -671,7 +668,7 @@ func startMining() {
 			lastBlock := BlockchainRef.LastBlock
 			BlockchainRef.Unlock()
 			depth = lastBlock.Depth
-			ink = lastBlock.Ink
+			ink = lastBlock.Ink //TODO do we still have this or is it in inkMap
 			prevBlockHash = lastBlock.Hash
 		}
 		select {
@@ -702,7 +699,7 @@ func startMining() {
 				PrevBlockHash: prevHash,
 				PubKeyMiner:   pubKeyString,
 				Nonce:         nonce,
-				Ink:           ink + Settings.InkPerNoOpBlock,
+				Ink:           ink + Settings.InkPerNoOpBlock, //TODO is ink still in block
 			}
 			sendBlock(block)
 			BlockchainRef.Lock()
@@ -841,20 +838,29 @@ func updateInk(block *Block) {
 // Get longest chain from connected miners
 func getLongestChain() *Blockchain {
 	//TODO
-	// Get the last block from all the miners
-	depthMap := make(map[*rpc.Client]uint32)
+	// Get the largest block depth from all the miners
+	depth := 0
+	var conn *rpc.Client
 
-	var reply shared.BlockArgs
 	for _, value := range connectedMiners.miners {
+		var reply shared.BlockArgs
 		var b *Block
-		value.MinerConn.Call("InkMiner.getDepth", &reply, &reply)
+		value.MinerConn.Call("InkMiner.getLatestBlock", &reply, &reply)
 		err := json.Unmarshal(reply.BlockString, b)
-
+		if b.Depth > depth {
+			depth = b.Depth
+			conn = value.MinerConn
+		}
 	}
 
-	// Compare the depth of the last block and choose biggest
-	// Get all blocks from that miner
-	//
+	// TODO
+	// Get map of index:hash
+	var reply shared.BlockArgs
+	value.MinerConn.Call("InkMiner.getLongestChain", &reply, &reply)
+
+	// Compare hashes starting from end of map
+	// Remove differing block
+	// Go through index and get single blocks
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -879,10 +885,24 @@ func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
 
 	// todo when should ink actually be updated?
-	Ink = Ink - args.InkRequired
+	Ink = Ink - args.InkRequired //No longer have Ink, stored in inkMap
 	*reply = shared.AddShapeResponse{InkRemaining: Ink}
 
 	return nil
+}
+
+// Return block with largest depth
+func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+	BlockchainRef.Lock()
+	block := BlockchainRef.LastBlock
+	BlockchainRef.Unlock()
+	blockstring, _ := json.Marshal(block)
+	reply.Blockstring = blockstring
+	return nil
+}
+
+// Get map of longest chain, with index of blockchain:hash
+func (m InkMiner) getLongestChain(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -909,11 +929,8 @@ func main() {
 		BlockchainRef = NewBlockchain()
 		BlockchainRef.Unlock()
 	} else {
-		bchain := getLongestChain()
 		//TODO do some shit to get the actual blocks
 		// TODO ask for the missing blocks from
-		BlockchainRef.Lock()
-		BlockchainRef = bchain
-		BlockchainRef.Unlock()
+		getLongestChain()
 	}
 }
