@@ -46,7 +46,7 @@ var (
 	LocalAddr     net.Addr
 	Settings      MinerNetSettings
 	BlockchainRef *Blockchain
-	Ink           uint32
+	inkMap        map[string]uint32 // map pubkeyminer to inkremaining
 	// Error logging
 	errLog *log.Logger = log.New(os.Stderr, "[serv] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 	outLog *log.Logger = log.New(os.Stderr, "[miner] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
@@ -131,6 +131,8 @@ type Op struct {
 	ShapeOpSig string
 	// PubKeyArtNode is the public key of the artnode that generated the op
 	PubKeyArtNode string
+	// InkRequired is the amount of ink required for this op
+	InkRequired uint32
 }
 
 // Block represents a block in the blockchain, contains transactions and metadata
@@ -147,12 +149,11 @@ type Block struct {
 	PubKeyMiner ecdsa.PublicKey
 	// Nonce is a 32-bit unsigned integer nonce
 	Nonce string
-	// Ink is the amount of ink the miner associated with pubkeyminer has
-	Ink uint32
 }
 
 // Blockchain represents the blockchain, contains an array of Blocks
 type Blockchain struct {
+	sync.RWMutex
 	Blocks    []*Block
 	LastBlock *Block
 }
@@ -203,7 +204,6 @@ func NewBlock(prevBlock Block, hash string, nonce string) *Block {
 	block := &Block{
 		Depth:       prevBlock.Depth + 1,
 		PubKeyMiner: PubKey,
-		Ink:         Ink,
 		// Ops:
 		PrevBlockHash: prevBlock.Hash,
 		Hash:          hash,
@@ -216,7 +216,6 @@ func NewBlock(prevBlock Block, hash string, nonce string) *Block {
 func NewGenesisBlock() *Block {
 	block := &Block{
 		Hash:          config.GenesisBlockHash,
-		Ink:           0,
 		Depth:         0,
 		PrevBlockHash: "",
 	}
@@ -272,18 +271,11 @@ func ConnectServer(serverAddr string) {
 
 	localAddr = fmt.Sprintf("%s%s", localAddr, ":0")
 
-	ln, _ := net.Listen("tcp", localAddr)
+	ln, err := net.Listen("tcp", localAddr)
 	LocalAddr = ln.Addr()
 
-	// TODO:
-	// Generating public and private key pairing for now
-	// Eventually need to use file parameters
-	r, err := os.Open("/dev/urandom")
-	key, err := ecdsa.GenerateKey(elliptic.P384(), r)
-	PubKey = key.PublicKey
-	PrivKey = key
-	Ink = 10
-	defer r.Close()
+	pubKeyString := pubKeyToString(PubKey)
+	inkMap[pubKeyString] = 10
 
 	Server, err = rpc.Dial("tcp", serverAddr)
 	if err != nil {
@@ -309,7 +301,7 @@ func ConnectServer(serverAddr string) {
 	go sendHeartBeats()
 
 	// start mining noop blocks
-	go startMining()
+	//go startMining()
 
 	// Get nodes from server and attempt to connect to them
 	err = GetNodes()
@@ -366,7 +358,7 @@ func GetNodes() (err error) {
 	newMiners := 0
 
 	for _, addr := range addrSet {
-		if _, ok := connectedMiners.miners[addr.String()]; !ok && addr != LocalAddr {
+		if _, ok := connectedMiners.Miners[addr.String()]; !ok && addr != LocalAddr {
 			outLog.Println("Connecting to miner...")
 			// Attempt to establish connections to retrieved miners
 			err = ConnectMiner(addr)
@@ -395,7 +387,7 @@ func GetNodes() (err error) {
 func monitorThreshold() {
 	for {
 		connectedMiners.Lock()
-		numConnectedMiners := len(connectedMiners.miners)
+		numConnectedMiners := len(connectedMiners.Miners)
 		connectedMiners.Unlock()
 		threshold := int(Settings.MinNumMinerConnections)
 
@@ -445,7 +437,7 @@ func ConnectMiner(addr net.Addr) (err error) {
 
 	// Register miner to miner map
 	connectedMiners.Lock()
-	connectedMiners.miners[minerAddr] = &Miner{
+	connectedMiners.Miners[minerAddr] = &Miner{
 		Address:         addr,
 		Key:             minerPubKey,
 		RecentHeartbeat: time.Now().UnixNano(),
@@ -482,7 +474,7 @@ func (m InkMiner) RegisterMiner(args *MinerInfo, reply *MinerInfo) (err error) {
 
 	// Register to miner to miner map
 	connectedMiners.Lock()
-	connectedMiners.miners[minerAddr.String()] = &Miner{
+	connectedMiners.Miners[minerAddr.String()] = &Miner{
 		Address:         minerAddr,
 		Key:             minerPubKey,
 		RecentHeartbeat: time.Now().UnixNano(),
@@ -508,14 +500,14 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 
 	// Turn json string into struct
 	var block Block
-	err = json.Unmarshal(args.BlockString, block)
+	err = json.Unmarshal([]byte(args.BlockString), block)
 	if err != nil {
-		outlog.Printf("Couldn't unmarshal block string:%s\n", err)
+		outLog.Printf("Couldn't unmarshal block string:%s\n", err)
 	}
 
 	// Check that block hasn't been repeated, check from end first
 	BlockchainRef.Lock()
-	for i := range len(BlockchainRef.Blocks) {
+	for i := 0; i < len(BlockchainRef.Blocks); i++ {
 		b := BlockchainRef.Blocks[i]
 		if b.Hash == block.Hash {
 			validationComplete <- 1
@@ -542,21 +534,21 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 	}
 
 	// Check that nonce is correct
-	err = checkNonce(block)
+	err = checkNonce(&block)
 	if err != nil {
 		validationComplete <- 1
 		return errors.New("Bad nonce")
 	}
 
 	// Check for valid signature
-	err = checkValidSignature(block)
+	err = checkValidSignature(&block)
 	if err != nil {
 		validationComplete <- 1
 		return errors.New("Bad signature")
 	}
 
 	// Check if valid parent
-	err = checkValidParent(block)
+	err = checkValidParent(&block)
 	if err != nil {
 		validationComplete <- 1
 		return errors.New("Bad parent")
@@ -564,18 +556,20 @@ func (m InkMiner) validateBlock(args *shared.BlockArgs, reply *shared.BlockArgs)
 
 	// Add to blockchain, update last block
 	BlockchainRef.Lock()
-	BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
-	BlockchainRef.LastBlock = block
+	BlockchainRef.Blocks = append(BlockchainRef.Blocks, &block)
+	BlockchainRef.LastBlock = &block
 	BlockchainRef.Unlock()
 
 	// Update ink amounts
-	updateInk(block)
+	updateInk(&block)
 
 	// Send block to connected miners
-	sendBlock(block)
+	sendBlock(&block)
 
 	// Send signal to channel that block validation is complete
 	validationComplete <- 1
+
+	return nil
 }
 
 // Sends heartbeat signals to other miners
@@ -597,11 +591,11 @@ func (m InkMiner) MinerHeartBeat(minerInfo *MinerInfo, _ignored *bool) (err erro
 	connectedMiners.Lock()
 	defer connectedMiners.Unlock()
 	minerAddr := minerInfo.Address.String()
-	if _, ok := connectedMiners.miners[minerAddr]; !ok {
+	if _, ok := connectedMiners.Miners[minerAddr]; !ok {
 		return err
 	}
 
-	connectedMiners.miners[minerAddr].RecentHeartbeat = time.Now().UnixNano()
+	connectedMiners.Miners[minerAddr].RecentHeartbeat = time.Now().UnixNano()
 
 	return nil
 }
@@ -610,9 +604,9 @@ func (m InkMiner) MinerHeartBeat(minerInfo *MinerInfo, _ignored *bool) (err erro
 func monitor(minerAddr string, heartBeatInterval time.Duration) {
 	for {
 		connectedMiners.Lock()
-		if time.Now().UnixNano()-connectedMiners.miners[minerAddr].RecentHeartbeat > int64(heartBeatInterval) {
-			outLog.Printf("%s timed out\n", connectedMiners.miners[minerAddr].Address.String())
-			delete(connectedMiners.miners, minerAddr)
+		if time.Now().UnixNano()-connectedMiners.Miners[minerAddr].RecentHeartbeat > int64(heartBeatInterval) {
+			outLog.Printf("%s timed out\n", connectedMiners.Miners[minerAddr].Address.String())
+			delete(connectedMiners.Miners, minerAddr)
 			connectedMiners.Unlock()
 			return
 		}
@@ -628,7 +622,8 @@ func monitor(minerAddr string, heartBeatInterval time.Duration) {
 // Turn public key string to public key type
 func stringToPubKey(pubString string) *ecdsa.PublicKey {
 	pKey, _ := hex.DecodeString(pubString)
-	key, _ := x509.ParsePKIXPublicKey(pKey)
+	decodedKey, _ := x509.ParsePKIXPublicKey(pKey)
+	key := decodedKey.(*ecdsa.PublicKey)
 	return key
 }
 
@@ -644,12 +639,12 @@ func pubKeyToString(pubKey ecdsa.PublicKey) string {
 // hash is a hash of [prev-hash, op, op-signature, pub-key, nonce]
 func startMining() {
 	// vars needed to create noop block
-	var depth, ink uint32
-	var prevBlockHash, nonce, hash string
+	var depth uint32
+	var prevBlockHash, nonce, hash, pubKeyString string
 
 	// Channels
 	opChannel = make(chan int, 3)
-	OpComplete = make(chan int, 3)
+	opComplete = make(chan int, 3)
 	recvBlockChannel = make(chan int, 3)
 	validationComplete = make(chan int, 3)
 
@@ -668,7 +663,6 @@ func startMining() {
 			lastBlock := BlockchainRef.LastBlock
 			BlockchainRef.Unlock()
 			depth = lastBlock.Depth
-			ink = lastBlock.Ink //TODO do we still have this or is it in inkMap
 			prevBlockHash = lastBlock.Hash
 		}
 		select {
@@ -681,7 +675,7 @@ func startMining() {
 		default:
 			// Get the value of new hash block and nonce
 			pubKeyString = pubKeyToString(PubKey)
-			contents := fmt.Sprintf("%s%s", prevHash, pkeyString)
+			contents := fmt.Sprintf("%s%s", prevBlockHash, pubKeyString)
 			nonce, hash = getNonce(contents, Settings.PoWDifficultyNoOpBlock)
 		}
 		select {
@@ -696,14 +690,13 @@ func startMining() {
 			block := &Block{
 				Hash:          hash,
 				Depth:         uint32(depth + 1),
-				PrevBlockHash: prevHash,
-				PubKeyMiner:   pubKeyString,
+				PrevBlockHash: prevBlockHash,
+				PubKeyMiner:   PubKey,
 				Nonce:         nonce,
-				Ink:           ink + Settings.InkPerNoOpBlock, //TODO is ink still in block
 			}
 			sendBlock(block)
 			BlockchainRef.Lock()
-			append(BlockchainRef.Blocks, block)
+			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 			BlockchainRef.Unlock()
 			ink := inkMap[pubKeyString]
 			inkMap[pubKeyString] = (ink + Settings.InkPerNoOpBlock)
@@ -718,7 +711,7 @@ func startMining() {
 
 // Return false if nonce validation fails
 // Return nonce and hash made with nonce that has required 0s
-func getNonce(blockHash string, difficulty int64) (string, string) {
+func getNonce(blockHash string, difficulty uint8) (string, string) {
 	wantedString := strings.Repeat("0", int(difficulty))
 	var h string
 
@@ -758,7 +751,7 @@ func checkNonce(block *Block) error {
 	numOps := len(block.Ops)
 	if numOps > 0 {
 		difficulty = Settings.PoWDifficultyOpBlock
-		for i := range numOps {
+		for i := 0; i <= numOps; i++ {
 			secret = fmt.Sprintf("%s%s%s", secret, ops[i].ShapeOp, ops[i].ShapeOpSig)
 		}
 	}
@@ -784,19 +777,21 @@ func checkNonce(block *Block) error {
 //  Check if block has a valid signatures for the ops
 func checkValidSignature(block *Block) error {
 	ops := block.Ops
-	for i := range len(block.Ops) {
-		pkey := ops[i].PubKeyArtNode
-		if !ecdsa.Verify(pkey, ops[i].ShapeOpSig, pkey.X, pkey.Y) {
+	for i := 0; i <= len(block.Ops); i++ {
+		pkey := stringToPubKey(ops[i].PubKeyArtNode)
+		if !ecdsa.Verify(pkey, []byte(ops[i].ShapeOpSig), pkey.X, pkey.Y) {
 			return errors.New("Op signature does not match")
 		}
 	}
+
+	return nil
 }
 
 // Return error if block does not have valid parent in blockchain
 func checkValidParent(block *Block) error {
 	BlockchainRef.Lock()
 	for i := len(BlockchainRef.Blocks) - 1; i >= 0; i-- {
-		if block.PrevBlockHash == BlockchainRef.Blocks.Hash {
+		if block.PrevBlockHash == BlockchainRef.Blocks[i].Hash {
 			BlockchainRef.Unlock()
 			return nil
 		}
@@ -809,9 +804,9 @@ func checkValidParent(block *Block) error {
 func sendBlock(block *Block) {
 	b, err := json.Marshal(block)
 	if err != nil {
-		outlog.Printf("Error marshalling block into string:%s\n", err)
+		outLog.Printf("Error marshalling block into string:%s\n", err)
 	}
-	var m []string
+
 	var reply *bool
 	for _, value := range connectedMiners.Miners {
 		value.MinerConn.Call("InkMiner.ValidateBlock", b, reply)
@@ -822,31 +817,31 @@ func sendBlock(block *Block) {
 func updateInk(block *Block) {
 	pubKey := pubKeyToString(block.PubKeyMiner)
 	minerInk := inkMap[pubKey]
-	OpMinerInk := inkMap[block.Ops.PubKeyArtNode]
-	if len(block.Ops) > 0 {
-		// Get amount of ink of ops and remove from miner of op
-		for i := range block.Ops {
-			inkMap[blocks.Ops[i].PubKeyArtNode] = OpMinerInk - block.Ops[i].InkRequired
-			inkMap[block.PubKeyMiner] = minerInk + Settings.InkPerOpBlock
-		}
-	} else {
-		// Add ink to miner that mined block
-		inkMap[block.PubKeyMiner] = minerInk + Settings.InkPerNoOpBlock
+
+	// If ops exist, credit and debit ink to miners
+	for i := 0; i < len(block.Ops); i++ {
+		OpMinerInk := inkMap[block.Ops[i].PubKeyArtNode]
+		inkMap[block.Ops[i].PubKeyArtNode] = OpMinerInk - block.Ops[i].InkRequired
+		inkMap[pubKey] = minerInk + Settings.InkPerOpBlock
+		return
 	}
+	// Else add ink to miner that mined block
+	inkMap[pubKey] = minerInk + Settings.InkPerNoOpBlock
 }
 
 // Get longest chain from connected miners
-func getLongestChain() *Blockchain {
-	//TODO
-	// Get the largest block depth from all the miners
-	depth := 0
+func getLongestChain() {
+	depth := uint32(0)
 	var conn *rpc.Client
 
-	for _, value := range connectedMiners.miners {
+	for _, value := range connectedMiners.Miners {
 		var reply shared.BlockArgs
 		var b *Block
 		value.MinerConn.Call("InkMiner.getLatestBlock", &reply, &reply)
-		err := json.Unmarshal(reply.BlockString, b)
+		err := json.Unmarshal([]byte(reply.BlockString), b)
+		if err != nil {
+			outLog.Printf("Error unmarshalling latest block")
+		}
 		if b.Depth > depth {
 			depth = b.Depth
 			conn = value.MinerConn
@@ -856,7 +851,8 @@ func getLongestChain() *Blockchain {
 	// TODO
 	// Get map of index:hash
 	var reply shared.BlockArgs
-	value.MinerConn.Call("InkMiner.getLongestChain", &reply, &reply)
+
+	conn.Call("InkMiner.getChain", &reply, &reply)
 
 	// Compare hashes starting from end of map
 	// Remove differing block
@@ -876,10 +872,12 @@ func (m InkMiner) RegisterArtNode(Key ecdsa.PublicKey, settings *CanvasSettings)
 	return nil
 }
 
+/* Changed data structure - does not apply
 func (m InkMiner) GetInk(args shared.Reply, reply *shared.Reply) (err error) {
 	*reply = shared.Reply{InkRemaining: Ink}
 	return nil
 }
+
 
 // TODO ADD TO BLOCKCHAIN
 func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResponse) (err error) {
@@ -890,6 +888,7 @@ func (m InkMiner) AddShape(args *shared.AddShapeInfo, reply *shared.AddShapeResp
 
 	return nil
 }
+*/
 
 // Return block with largest depth
 func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
@@ -897,29 +896,54 @@ func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs
 	block := BlockchainRef.LastBlock
 	BlockchainRef.Unlock()
 	blockstring, _ := json.Marshal(block)
-	reply.Blockstring = blockstring
+	reply.BlockString = string(blockstring)
 	return nil
 }
 
+// TODO
 // Get map of longest chain, with index of blockchain:hash
-func (m InkMiner) getLongestChain(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+func (m InkMiner) getChain(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
+	return nil
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // MAIN, LOCAL
 ////////////////////////////////////////////////////////////////////////////////
 
+func decodePPKeys(encodedPriv string, encodedPub string) (privKey *ecdsa.PrivateKey, pubKey *ecdsa.PublicKey) {
+	// Decode strings to byte arrays
+	decodedPriv, _ := hex.DecodeString(encodedPriv)
+	decidedPub, _ := hex.DecodeString(encodedPub)
+
+	// Parse x509
+	privKey, _ = x509.ParseECPrivateKey(decodedPriv)
+	parsedPubKey, _ := x509.ParsePKIXPublicKey(decidedPub)
+	pubKey = parsedPubKey.(*ecdsa.PublicKey)
+
+	return privKey, pubKey
+}
+
 func main() {
 	gob.Register(&net.TCPAddr{})
 	gob.Register(&elliptic.CurveParams{})
 
-	// check for correct arguments
+	// Check for correct arguments
 	args := os.Args
 	if len(args) != 4 {
 		fmt.Println("Usage: go run ink-miner.go [server ip:port] [pubKey] [privKey]")
 		return
 	}
 	serverAddr := args[1]
+	pubKeyString := args[2]
+	privKeyString := args[3]
+
+	fmt.Println("Here is the private key string: ", privKeyString)
+	fmt.Println("Here is the public key string: ", pubKeyString)
+
+	privKey, pubKey := decodePPKeys(privKeyString, pubKeyString)
+
+	PubKey = *pubKey
+	PrivKey = privKey
 
 	ConnectServer(serverAddr)
 
