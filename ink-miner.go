@@ -511,7 +511,7 @@ func ConnectServer(serverAddr string) {
 	}
 
 	// start mining noop blocks
-	go startMining()
+	//go startMining()
 
 	// Monitor the miner threshold
 	go monitorThreshold()
