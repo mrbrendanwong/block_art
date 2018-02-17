@@ -3,7 +3,9 @@ package main
 import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
+	"crypto/x509"
 	"encoding/gob"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -49,6 +51,8 @@ func main() {
 	if checkError(err) != nil {
 		return
 	}
+	fmt.Println("Here is the amount of ink")
+	fmt.Printf("%d\n", int(inkAmount))
 
 	// Draw line 1.
 	shapeHash, blockHash, _, err := canvas.AddShape(validateNum, blockartlib.PATH, "M 0 0 L 0 5", "transparent", "red")
@@ -63,7 +67,7 @@ func main() {
 	}
 
 	// Get SVG string of line 1
-	svgString, err := GetSvgString(shapeHash)
+	svgString, err := canvas.GetSvgString(shapeHash)
 	if checkError(err) != nil {
 		return
 	}
@@ -72,13 +76,13 @@ func main() {
 	fmt.Println(svgString)
 
 	// Get shapes for first blockhash
-	line1ShapeHashes, err := cavas.GetShapes(blockHash)
+	line1ShapeHashes, err := canvas.GetShapes(blockHash)
 	if checkError(err) != nil {
 		return
 	}
 
 	fmt.Println("Here are the shape hashes our first block hash")
-	for hash := range line1ShapeHashes {
+	for _, hash := range line1ShapeHashes {
 		fmt.Println(hash)
 	}
 
@@ -89,13 +93,13 @@ func main() {
 	}
 
 	// Get children of Genesis block
-	childrenHashes := canvas.GetChildren(genesisHash)
+	childrenHashes, err := canvas.GetChildren(genesisHash)
 	if checkError(err) != nil {
 		return
 	}
 
 	fmt.Println("Here are the children hashses")
-	for hash := range childrenHashes {
+	for _, hash := range childrenHashes {
 		fmt.Println(hash)
 	}
 
