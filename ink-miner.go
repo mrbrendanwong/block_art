@@ -872,7 +872,6 @@ func startMining() {
 		select {
 		case <-opChannel:
 			<-opComplete
-			fmt.Println("ping")
 
 			goto findLongestBranch
 		case <-recvBlockChannel:
@@ -890,7 +889,6 @@ func startMining() {
 		select {
 		case <-opChannel:
 			<-opComplete
-			fmt.Println("ping")
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -904,7 +902,6 @@ func startMining() {
 		select {
 		case <-opChannel:
 			<-opComplete
-			fmt.Println("ping")
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
@@ -922,7 +919,7 @@ func startMining() {
 			BlockchainRef.lock.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
 			BlockchainRef.lock.Unlock()
-			//fmt.Println("ADDING NOOP BLOCK")
+			fmt.Println("ADDING NOOP BLOCK")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 
