@@ -314,7 +314,11 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 	}
 	addShapeResponse := shared.AddShapeResponse{}
 
-	Miner.Call("InkMiner.AddShape", op, &addShapeResponse)
+	error := Miner.Call("InkMiner.AddShape", op, &addShapeResponse)
+	if error != nil {
+		fmt.Println(error)
+	}
+	fmt.Println("returned from call")
 
 	// TODO fix error handling
 	if addShapeResponse.Err != nil {

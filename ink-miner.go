@@ -228,7 +228,7 @@ func NewBlockchain() *Blockchain {
 // TODO
 // disseminate op
 // Send validated op to all connected miners
-func sendOp(op *shared.Op) {
+func sendOp(op *shared.Op) error {
 	b, err := json.Marshal(op)
 	if err != nil {
 		outLog.Printf("Error marshalling op into string:%s\n", err)
@@ -238,6 +238,8 @@ func sendOp(op *shared.Op) {
 	for _, value := range connectedMiners.Miners {
 		value.MinerConn.Call("InkMiner.ReceiveOp", b, reply)
 	}
+	return nil
+
 }
 
 // ReceiveOp is called from another miner which sent it a valid op
@@ -259,7 +261,7 @@ func isOpInBlock(op *shared.Op, block Block) bool {
 }
 
 // local receive op function to mine for block
-func receiveOp(op *shared.Op) {
+func receiveOp(op *shared.Op) error {
 	var depth uint32
 	var prevBlockHash string
 	var nonce string
@@ -327,6 +329,7 @@ func receiveOp(op *shared.Op) {
 		// can now stop working on op
 		opComplete <- 1
 	}
+	return nil
 }
 
 // Validate operation from artnode
@@ -1074,11 +1077,16 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 }
 
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
+	fmt.Println("INKMINER: addshape")
+
 	// validate op myself
-	error := validateOp(op)
-	if error != nil {
-		reply.Err = error
-	}
+	reply.Err = nil
+	// error := validateOp(op)
+	// if error != nil {
+	// 	reply.Err = error
+	// } else {
+	// 	reply.Err = nil
+	// }
 	// send validated op to neighbours
 	sendOp(op)
 	// start POW myself too
