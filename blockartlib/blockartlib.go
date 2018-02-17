@@ -37,8 +37,7 @@ var (
 	minerAddr  string
 	publicKey  ecdsa.PublicKey
 	privateKey ecdsa.PrivateKey
-	errLog    *log.Logger = log.New(os.Stderr, "[artnode] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
-
+	errLog     *log.Logger = log.New(os.Stderr, "[artnode] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
 )
 
 const SVGSTRING_MAXLEN = 128
@@ -283,7 +282,6 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-
 	// Sign the shape op
 	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
 	shapeOpSig := &shared.ShapeOpSig{
@@ -325,7 +323,7 @@ func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 		return "", DisconnectedError("")
 	}
 
-	var shape shared.Shape
+	var shape shared.ShapeOp
 	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
 	if err != nil {
 		handleError("Could not retrieve svg string.", err)

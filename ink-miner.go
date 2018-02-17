@@ -1095,45 +1095,45 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 }
 
 // Return genesis block to art node
-func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error){
+func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error) {
 	*hash = Settings.GenesisBlockHash
 	return nil
 }
 
 // Returns Svg string to corresponding shape
-func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp)(err error){
-	BlockchainRef.RLock()
-	for i := range BlockchainRef.Blocks {
-		ops := BlockchainRef.Blocks[i].Ops
-		for j:= range ops {
-			if ops[j].ShapeOpSig == shapeHash {
-				*shape = ops[j].ShapeOp
-				BlockchainRef.RUnlock()
-				return nil
-			}
-		}
-	}
-	BlockchainRef.RUnlock()
+func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp) (err error) {
+	//BlockchainRef.lock.RLock()
+	//for i := range BlockchainRef.Blocks {
+	//	ops := BlockchainRef.Blocks[i].Ops
+	//	for j:= range ops {
+	//		if ops[j].ShapeOpSig == shapeHash {
+	//			*shape = ops[j].ShapeOp
+	//			BlockchainRef.lock.RUnlock()
+	//			return nil
+	//		}
+	//	}
+	//}
+	//BlockchainRef.lock.RUnlock()
 	return blockartlib.InvalidShapeHashError(shapeHash)
 }
 
-func (m InkMiner) GetShapes(blockHash string, shapes *[]string)(err error){
-	BlockchainRef.RLock()
-	for i := range BlockchainRef.Blocks {
-		if BlockchainRef.Blocks[i].Hash == blockHash {
-			block := BlockchainRef.Blocks[i]
-			for j :=  range block.Ops {
-				*shapes = append(*shapes, block.Ops[j].ShapeOpSig)
-			}
-			BlockchainRef.RUnlock()
-			return nil
-		}
-	}
-	BlockchainRef.RUnlock()
+func (m InkMiner) GetShapes(blockHash string, shapes *[]string) (err error) {
+	//BlockchainRef.lock.RLock()
+	//for i := range BlockchainRef.Blocks {
+	//	if BlockchainRef.Blocks[i].Hash == blockHash {
+	//		block := BlockchainRef.Blocks[i]
+	//		for j :=  range block.Ops {
+	//			*shapes = append(*shapes, block.Ops[j].ShapeOpSig)
+	//		}
+	//		BlockchainRef.lock.RUnlock()
+	//		return nil
+	//	}
+	//}
+	//BlockchainRef.lock.RUnlock()
 	return blockartlib.InvalidBlockHashError(blockHash)
 }
 
-func (m InkMiner) GetChildren(blockHash string, children *[]string)(err error){
+func (m InkMiner) GetChildren(blockHash string, children *[]string) (err error) {
 	// TODO
 	var found bool = false
 	var res []string
@@ -1141,27 +1141,26 @@ func (m InkMiner) GetChildren(blockHash string, children *[]string)(err error){
 	// Then recursively look for child
 	currentHash := blockHash
 	fmt.Println(len(BlockchainRef.Blocks))
-	for i:= 0 ; i < len(BlockchainRef.Blocks) ; i++ {
+	for i := 0; i < len(BlockchainRef.Blocks); i++ {
 		fmt.Println(BlockchainRef.Blocks[i].PrevBlockHash)
 		if BlockchainRef.Blocks[i].PrevBlockHash == currentHash {
-			if !found{
+			if !found {
 				// found first block
 				found = true
 			}
 			res = append(res, BlockchainRef.Blocks[i].Hash)
 			currentHash = BlockchainRef.Blocks[i].Hash
-			i = 0														// start searching again from beginning
+			i = 0 // start searching again from beginning
 		}
 	}
 
-	if !found{
+	if !found {
 		// passed blockHash not found in blockchain
 		return blockartlib.InvalidBlockHashError(blockHash)
 	}
 	*children = res
 	return nil
 }
-
 
 // Return block with largest depth
 func (m InkMiner) getLatestBlock(args *shared.BlockArgs, reply *shared.BlockArgs) (err error) {
