@@ -474,7 +474,7 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error) {
 func drawCanvas(allStrings []string) (err error) {
 	//Create and write to HTML file
 	file, err := os.OpenFile(BA_FILE, os.O_CREATE|os.O_WRONLY, 0664)
-	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n</svg>"))
+	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n"))
 	for _, str := range allStrings {
 		file.Write([]byte(str))
 	}

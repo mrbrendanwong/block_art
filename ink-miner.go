@@ -511,7 +511,7 @@ func ConnectServer(serverAddr string) {
 	}
 
 	// start mining noop blocks
-	//go startMining()
+	go startMining()
 
 	// Monitor the miner threshold
 	go monitorThreshold()
@@ -908,13 +908,11 @@ func startMining() {
 			sendBlock(block)
 			BlockchainRef.lock.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
-			BlockchainRef.lock.Unlock()
 			fmt.Println("ADDING NOOP BLOCK")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 
 			// Update last block
-			BlockchainRef.lock.Lock()
 			BlockchainRef.LastBlock = block
 			BlockchainRef.lock.Unlock()
 		}
