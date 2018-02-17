@@ -13,7 +13,6 @@ import (
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
-	"log"
 	"math"
 	"net/rpc"
 	"os"
@@ -22,6 +21,8 @@ import (
 	"strings"
 
 	"../shared"
+
+	"log"
 )
 
 const (
@@ -278,12 +279,12 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 	}
 	InkRemaining, err := a.GetInk()
 
-	if InkRequired > InkRemaining {
-		return "", "", 0, InsufficientInkError(InkRequired)
-	}
+	//if InkRequired > InkRemaining {
+	//	return "", "", 0, InsufficientInkError(InkRequired)
+	//}
 
 	// Sign the shape op
-	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
+	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString+shapeOp.Fill+shapeOp.Stroke))
 	shapeOpSig := &shared.ShapeOpSig{
 		R: r,
 		S: s,
@@ -302,20 +303,14 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 	}
 	addShapeResponse := shared.AddShapeResponse{}
 
-	error := Miner.Call("InkMiner.AddShape", op, &addShapeResponse)
+	error := a.Miner.Call("InkMiner.AddShape", op, &addShapeResponse)
 	if error != nil {
 		fmt.Println(error)
-	}
-	fmt.Println("returned from call")
-
-	// TODO fix error handling
-	if addShapeResponse.Err != nil {
-		return "", "", 0, addShapeResponse.Err
+		return "", "", 0, error
 	}
 
-	fmt.Printf("InkRemaining after drawing shape:%d\n", addShapeResponse.InkRemaining)
-
-	return "", "", addShapeResponse.InkRemaining, nil
+	InkRemaining = InkRemaining - InkRequired
+	return addShapeResponse.ShapeHash, addShapeResponse.BlockHash, InkRemaining, nil
 }
 
 func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
@@ -350,69 +345,57 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 }
 
 func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
-	//	if !a.connected {
-	//		return 0, DisconnectedError("")
-	//	}
-	//
-	//	var shape shared.Shape
-	//	var newShape shared.Shape
-	//	// Get shape from block chain
-	//	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
-	//	if err != nil {
-	//		handleError("Could not delete shape.", err)
-	//		return 0, err
-	//	}
-	//	if shape.Fill != "transparent"{
-	//		// Create new shape
-	//		newShape = shared.Shape{
-	//			shape.ShapeType,
-	//			shape.ShapeSvgString,
-	//			"white",
-	//			"white",
-	//		}
-	//	} else {
-	//		// Create new shape
-	//		newShape = shared.Shape{
-	//			shape.ShapeType,
-	//			shape.ShapeSvgString,
-	//			shape.Fill,
-	//			shape.Stroke,
-	//		}
-	//	}
-	//
-	//	// Sign the shape op
-	//	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
-	//	shapeOpSig := &shared.ShapeOpSig{
-	//		R: r,
-	//		S: s,
-	//	}
-	//	if err != nil {
-	//		fmt.Println()
-	//	}
-	//	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
-	//	encodedBytes := hex.EncodeToString(pubKeyBytes)
-	//
-	//	// Create new shape op
-	//	op := &shared.Op{
-	//		ShapeOpSig:    *shapeOpSig,
-	//		ValidateNum:   validateNum,
-	//		InkRequired:   0,
-	//		ShapeOp:       newShape,
-	//		PubKeyArtNode: encodedBytes,
-	//	}
-	//
-	//	var response shared.AddShapeResponse
-	//	err = a.Miner.Call("InkMiner.AddShape", op, &response)
-	//
-	//	// TODO fix error handling
-	//	if response.Err != nil {
-	//		return 0, response.Err
-	//	}
-	//
-	//	fmt.Printf("InkRemaining after drawing shape:%d\n", response.InkRemaining)
-	//
-	//	return response.InkRemaining, nil
-	return 0, nil
+	if !a.connected {
+		return 0, DisconnectedError("")
+	}
+
+	var shape shared.ShapeOp
+	var newShape shared.ShapeOp
+	// Get shape from block chain
+	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
+	if err != nil {
+		handleError("Could not delete shape.", err)
+		return 0, err
+	}
+	// Create new shape
+	newShape = shared.ShapeOp{
+		shape.ShapeType,
+		shape.ShapeSvgString,
+		"white",
+		"white",
+	}
+
+	// Sign the shape op
+	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(newShape.ShapeSvgString+newShape.Fill+newShape.Stroke))
+	shapeOpSig := &shared.ShapeOpSig{
+		R: r,
+		S: s,
+	}
+	if err != nil {
+		fmt.Println()
+	}
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+
+	// Create new shape op
+	op := &shared.Op{
+		ShapeOpSig:    *shapeOpSig,
+		ValidateNum:   validateNum,
+		InkRequired:   0,
+		ShapeOp:       newShape,
+		PubKeyArtNode: encodedBytes,
+	}
+
+	var response shared.AddShapeResponse
+	fmt.Println("Adding white shape.")
+	err = a.Miner.Call("InkMiner.AddShape", op, &response)
+	fmt.Println("Delete hash: ", response.ShapeHash)
+	if err != nil {
+		return 0, err
+	}
+
+	inkRemaining, _ = a.GetInk()
+	return inkRemaining, nil
 }
 
 func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
@@ -491,7 +474,7 @@ func (a ArtNode) CloseCanvas() (inkRemaining uint32, err error) {
 func drawCanvas(allStrings []string) (err error) {
 	//Create and write to HTML file
 	file, err := os.OpenFile(BA_FILE, os.O_CREATE|os.O_WRONLY, 0664)
-	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n</svg>"))
+	file.Write([]byte("<svg height=\"" + strconv.Itoa(int(Settings.CanvasXMax)) + "\" width=\"" + strconv.Itoa(int(Settings.CanvasYMax)) + "\">\n"))
 	for _, str := range allStrings {
 		file.Write([]byte(str))
 	}

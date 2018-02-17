@@ -40,10 +40,8 @@ type Op struct {
 }
 
 type AddShapeResponse struct {
-	ShapeHash    string
-	BlockHash    string
-	InkRemaining uint32
-	Err          error
+	ShapeHash string
+	BlockHash string
 }
 
 type BlockArgs struct {
