@@ -194,9 +194,8 @@ type ArtNodeInfo struct {
 // // NewGenesisBlock creates and returns genesis Block
 func NewGenesisBlock() *Block {
 	block := &Block{
-		Hash:          config.GenesisBlockHash,
-		Depth:         0,
-		PrevBlockHash: "",
+		Hash:  Settings.GenesisBlockHash,
+		Depth: 0,
 	}
 	return block
 }
@@ -262,7 +261,7 @@ func isOpInBlock(op *shared.Op, block Block) bool {
 
 // TODO:
 // REMOVE
-func createBlock(op *shared.Op) {
+func createBlock(op *shared.Op) string {
 	var depth uint32
 	var prevBlockHash string
 	var nonce string
@@ -279,9 +278,7 @@ func createBlock(op *shared.Op) {
 	marshalledShapeOpSig, _ := json.Marshal(op.ShapeOpSig)
 	contents := fmt.Sprintf("%s%s%s%s", prevBlockHash, pKeyString, marshalledShapeOp, marshalledShapeOpSig)
 	nonce, hash = getNonce(contents, Settings.PoWDifficultyOpBlock)
-	fmt.Println("Block Hash: ", hash)
 	ops := []*shared.Op{op}
-	fmt.Println("OPS:", ops[0])
 	block := &Block{
 		Ops:           ops,
 		Hash:          hash,
@@ -296,9 +293,9 @@ func createBlock(op *shared.Op) {
 	inkMap[pKeyString] = (ink + Settings.InkPerOpBlock)
 	// Update last block
 	BlockchainRef.LastBlock = block
-	fmt.Println("Last Block hash: ", BlockchainRef.LastBlock.Hash)
 
 	BlockchainRef.lock.Unlock()
+	return hash
 }
 
 // local receive op function to mine for block
@@ -330,7 +327,6 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
 			opComplete <- 1
-			fmt.Println("Complete")
 		}
 	default:
 		// get new hash and nonce
@@ -346,10 +342,8 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
 			opComplete <- 1
-			return
 		}
 	default:
-		fmt.Println("Complete pow....")
 		// complete pow //
 		block := &Block{
 			Ops:           []*shared.Op{op},
@@ -366,15 +360,12 @@ func receiveOp(op *shared.Op) {
 		ink := inkMap[pKeyString]
 		inkMap[pKeyString] = (ink + Settings.InkPerOpBlock)
 
-		fmt.Println("Update last block")
 		// Update last block
 		BlockchainRef.lock.Lock()
 		BlockchainRef.LastBlock = block
 		BlockchainRef.lock.Unlock()
 		// can now stop working on op
-		fmt.Println("Updated")
 		opComplete <- 1
-		fmt.Println("Complete")
 	}
 }
 
@@ -560,10 +551,10 @@ func GetNodes() (err error) {
 	// Array of miner addresses to be returned by the server
 	var addrSet []net.Addr
 
-	//outLog.Println("Checking for new miners")
+	outLog.Println("Checking for new miners")
 	err = Server.Call("RServer.GetNodes", PubKey, &addrSet)
 	if err != nil {
-		//outLog.Println("Error getting nodes from server.")
+		outLog.Println("Error getting nodes from server.")
 		return err
 	}
 
@@ -584,7 +575,7 @@ func GetNodes() (err error) {
 		}
 	}
 
-	//outLog.Printf("Connected to %d new ink miners\n", newMiners)
+	outLog.Printf("Connected to %d new ink miners\n", newMiners)
 
 	return nil
 }
@@ -604,9 +595,9 @@ func monitorThreshold() {
 		threshold := int(Settings.MinNumMinerConnections)
 
 		if numConnectedMiners < threshold {
-			//outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
-			//outLog.Printf("Threshold: %d\n", threshold)
-			//outLog.Println("We are below the minimum miner threshold!")
+			outLog.Printf("Number of connected miners: %d\n", numConnectedMiners)
+			outLog.Printf("Threshold: %d\n", threshold)
+			outLog.Println("We are below the minimum miner threshold!")
 
 			err := GetNodes()
 			if err != nil {
@@ -872,14 +863,13 @@ func startMining() {
 		select {
 		case <-opChannel:
 			<-opComplete
-
 			goto findLongestBranch
 		case <-recvBlockChannel:
 			<-validationComplete
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
-			//fmt.Printf("Size of blockchain:%d\n", len(BlockchainRef.Blocks))
+			fmt.Printf("Size of blockchain:%d\n", len(BlockchainRef.Blocks))
 			BlockchainRef.lock.Lock()
 			lastBlock := BlockchainRef.LastBlock
 			BlockchainRef.lock.Unlock()
@@ -1135,11 +1125,9 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	// f too
 	//receiveOp(op)
 
-	createBlock(op) // TODO: REMOVE
+	hash := createBlock(op) // TODO: REMOVE
 	reply.ShapeHash = op.ShapeOpSig.R.String() + op.ShapeOpSig.S.String()
-	BlockchainRef.lock.RLock()
-	reply.BlockHash = BlockchainRef.LastBlock.Hash
-	BlockchainRef.lock.RUnlock()
+	reply.BlockHash = hash
 	return nil
 }
 
@@ -1152,20 +1140,19 @@ func (m InkMiner) GetGenesisBlock(_ignored string, hash *string) (err error) {
 // Returns Svg string to corresponding shape
 func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp) (err error) {
 	// TODO: need to test
-	//BlockchainRef.RLock()
-	//for i := range BlockchainRef.Blocks {
-	//	ops := BlockchainRef.Blocks[i].Ops
-	//	for j:= range ops {
-	//		if ops[j].ShapeOpSig == shapeHash {
-	//			*shape = ops[j].ShapeOp
-	//			BlockchainRef.RUnlock()
-	//			return nil
-	//		}
-	//	}
-	//}
-	//BlockchainRef.RUnlock()
-	//return blockartlib.InvalidShapeHashError(shapeHash)
-	return nil
+	BlockchainRef.lock.RLock()
+	for i := range BlockchainRef.Blocks {
+		block := BlockchainRef.Blocks[i]
+		for j := range block.Ops {
+			if shapeHash == (block.Ops[j].ShapeOpSig.R.String() + block.Ops[j].ShapeOpSig.S.String()) {
+				*shape = block.Ops[j].ShapeOp
+				BlockchainRef.lock.RUnlock()
+				return nil
+			}
+		}
+	}
+	BlockchainRef.lock.RUnlock()
+	return blockartlib.InvalidShapeHashError(shapeHash)
 }
 
 func (m InkMiner) GetShapes(blockHash string, shapes *[]string) (err error) {
@@ -1176,7 +1163,7 @@ func (m InkMiner) GetShapes(blockHash string, shapes *[]string) (err error) {
 			block := BlockchainRef.Blocks[i]
 			fmt.Println(block.Ops)
 			for j := range block.Ops {
-				*shapes = append(*shapes, getShapeHash(block.Ops[j]))
+				*shapes = append(*shapes, block.Ops[j].ShapeOpSig.R.String()+block.Ops[j].ShapeOpSig.S.String())
 			}
 			BlockchainRef.lock.RUnlock()
 			return nil
@@ -1193,21 +1180,19 @@ func (m InkMiner) GetChildren(blockHash string, children *[]string) (err error) 
 	//First assert that blockhash exists in blockchain
 	//Then recursively look for child
 	currentHash := blockHash
-	fmt.Println(len(BlockchainRef.Blocks))
-	for i := 0; i < len(BlockchainRef.Blocks); i++ {
-		fmt.Println(BlockchainRef.Blocks[i].PrevBlockHash)
+	BlockchainRef.lock.RLock()
+	length := len(BlockchainRef.Blocks)
+	for i := 0; i < length; i++ {
 		if BlockchainRef.Blocks[i].PrevBlockHash == currentHash {
-			if !found {
-				// found first block
-				found = true
-			}
+			found = true
 			res = append(res, BlockchainRef.Blocks[i].Hash)
 			currentHash = BlockchainRef.Blocks[i].Hash
 			i = 0 // start searching again from beginning
 		}
 	}
-
-	if !found {
+	BlockchainRef.lock.RUnlock()
+	fmt.Println("Children: ", res)
+	if found == false {
 		// passed blockHash not found in blockchain
 		return blockartlib.InvalidBlockHashError(blockHash)
 	}
@@ -1248,10 +1233,6 @@ func decodePPKeys(encodedPriv string, encodedPub string) (privKey *ecdsa.Private
 	return privKey, pubKey
 }
 
-func getShapeHash(op *shared.Op) string {
-	return op.ShapeOpSig.S.String() + op.ShapeOpSig.R.String()
-}
-
 func main() {
 	gob.Register(&net.TCPAddr{})
 	gob.Register(&elliptic.CurveParams{})
@@ -1266,8 +1247,8 @@ func main() {
 	pubKeyString := args[2]
 	privKeyString := args[3]
 
-	//fmt.Println("Here is the private key string: ", privKeyString)
-	//fmt.Println("Here is the public key string: ", pubKeyString)
+	fmt.Println("Here is the private key string: ", privKeyString)
+	fmt.Println("Here is the public key string: ", pubKeyString)
 
 	privKey, pubKey := decodePPKeys(privKeyString, pubKeyString)
 

@@ -279,13 +279,12 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 	}
 	InkRemaining, err := a.GetInk()
 
-	if InkRequired > InkRemaining {
-		return "", "", 0, InsufficientInkError(InkRequired)
-	}
+	//if InkRequired > InkRemaining {
+	//	return "", "", 0, InsufficientInkError(InkRequired)
+	//}
 
-	fmt.Println("[artnode] creating shape op...")
 	// Sign the shape op
-	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
+	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString+shapeOp.Fill+shapeOp.Stroke))
 	shapeOpSig := &shared.ShapeOpSig{
 		R: r,
 		S: s,
@@ -346,7 +345,57 @@ func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
 }
 
 func (a ArtNode) DeleteShape(validateNum uint8, shapeHash string) (inkRemaining uint32, err error) {
-	return 0, nil
+	if !a.connected {
+		return 0, DisconnectedError("")
+	}
+
+	var shape shared.ShapeOp
+	var newShape shared.ShapeOp
+	// Get shape from block chain
+	err = a.Miner.Call("InkMiner.GetShape", shapeHash, &shape)
+	if err != nil {
+		handleError("Could not delete shape.", err)
+		return 0, err
+	}
+	// Create new shape
+	newShape = shared.ShapeOp{
+		shape.ShapeType,
+		shape.ShapeSvgString,
+		"white",
+		"white",
+	}
+
+	// Sign the shape op
+	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(newShape.ShapeSvgString+newShape.Fill+newShape.Stroke))
+	shapeOpSig := &shared.ShapeOpSig{
+		R: r,
+		S: s,
+	}
+	if err != nil {
+		fmt.Println()
+	}
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+
+	// Create new shape op
+	op := &shared.Op{
+		ShapeOpSig:    *shapeOpSig,
+		ValidateNum:   validateNum,
+		InkRequired:   0,
+		ShapeOp:       newShape,
+		PubKeyArtNode: encodedBytes,
+	}
+
+	var response shared.AddShapeResponse
+	fmt.Println("Adding white shape.")
+	err = a.Miner.Call("InkMiner.AddShape", op, &response)
+	fmt.Println("Delete hash: ", response.ShapeHash)
+	if err != nil {
+		return 0, err
+	}
+
+	inkRemaining, _ = a.GetInk()
+	return inkRemaining, nil
 }
 
 func (a ArtNode) GetShapes(blockHash string) (shapeHashes []string, err error) {
