@@ -7,9 +7,9 @@ library (blockartlib) to be used in project 1 of UBC CS 416 2017W2.
 
 package blockartlib
 
-import "crypto/ecdsa"
-import "../shared"
 import (
+	"crypto/ecdsa"
+	"crypto/rand"
 	"crypto/x509"
 	"encoding/hex"
 	"fmt"
@@ -20,6 +20,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+
+	"../shared"
 )
 
 const (
@@ -31,9 +33,12 @@ const (
 )
 
 var (
-	Miner     *rpc.Client
-	minerAddr string
+	Miner      *rpc.Client
+	minerAddr  string
+	publicKey  ecdsa.PublicKey
+	privateKey ecdsa.PrivateKey
 	errLog    *log.Logger = log.New(os.Stderr, "[artnode] ", log.Lshortfile|log.LUTC|log.Lmicroseconds)
+
 )
 
 const SVGSTRING_MAXLEN = 128
@@ -217,7 +222,7 @@ var (
 )
 
 // This function determines how much ink is needed to draw given shape
-func getInkRequired(shape shared.Shape) (inkNeeded uint32, err error) {
+func getInkRequired(shape shared.ShapeOp) (inkNeeded uint32, err error) {
 
 	points, err := getVertices(shape.ShapeSvgString)
 	if err != nil {
@@ -260,14 +265,14 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, ShapeSvgStringTooLongError("")
 	}
 
-	shape := &shared.Shape{
+	shapeOp := &shared.ShapeOp{
 		ShapeType:      shapeType,
 		ShapeSvgString: shapeSvgString,
 		Fill:           fill,
 		Stroke:         stroke,
 	}
 
-	InkRequired, err := getInkRequired(*shape)
+	InkRequired, err := getInkRequired(*shapeOp)
 	if err != nil {
 		handleError("Error getting ink required.", err)
 		return "", "", 0, err
@@ -278,15 +283,34 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, InsufficientInkError(InkRequired)
 	}
 
-	addShapeInfo := &shared.AddShapeInfo{
-		ValidateNum: validateNum,
-		InkRequired: InkRequired,
-		Shape:       *shape,
+
+	// Sign the shape op
+	r, s, _ := ecdsa.Sign(rand.Reader, &privateKey, []byte(shapeOp.ShapeSvgString))
+	shapeOpSig := &shared.ShapeOpSig{
+		R: r,
+		S: s,
+	}
+	if err != nil {
+		fmt.Println()
+	}
+	pubKeyBytes, _ := x509.MarshalPKIXPublicKey(publicKey)
+	encodedBytes := hex.EncodeToString(pubKeyBytes)
+	op := &shared.Op{
+		ShapeOpSig:    *shapeOpSig,
+		ValidateNum:   validateNum,
+		InkRequired:   InkRequired,
+		ShapeOp:       *shapeOp,
+		PubKeyArtNode: encodedBytes,
 	}
 	addShapeResponse := shared.AddShapeResponse{}
 
-	Miner.Call("InkMiner.AddShape", addShapeInfo, &addShapeResponse)
+	error := Miner.Call("InkMiner.AddShape", op, &addShapeResponse)
+	if error != nil {
+		fmt.Println(error)
+	}
+	fmt.Println("returned from call")
 
+	// TODO fix error handling
 	if addShapeResponse.Err != nil {
 		return "", "", 0, addShapeResponse.Err
 	}
@@ -314,9 +338,11 @@ func (a ArtNode) GetSvgString(shapeHash string) (svgString string, err error) {
 }
 
 func (a ArtNode) GetInk() (inkRemaining uint32, err error) {
-
-	reply := shared.Reply{}
-	error := Miner.Call("InkMiner.GetInk", reply, &reply)
+	message := shared.Message{
+		PublicKey: publicKey,
+	}
+	reply := shared.Message{}
+	error := Miner.Call("InkMiner.GetInk", message, &reply)
 	if error != nil {
 		return 0, DisconnectedError("Could not get ink")
 	}
@@ -574,6 +600,10 @@ func OpenCanvas(minerAddr string, privKey ecdsa.PrivateKey) (canvas Canvas, sett
 		fmt.Println("Could not open Canvas.", DisconnectedError(""))
 		return nil, CanvasSettings{}, DisconnectedError("")
 	}
+
+	// Save key
+	publicKey = privKey.PublicKey
+	privateKey = privKey
 
 	// Create art node
 	canvas = &ArtNode{minerAddr, miner, true}
