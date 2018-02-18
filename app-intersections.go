@@ -37,7 +37,7 @@ func main() {
 	validateNum := uint8(2)
 
 	/*
-	 *BEGIN OPERATIONS 
+	 *BEGIN OPERATIONS
 	 */
 
 	// Try to draw intersecting cross. Second shape should fail.
@@ -52,12 +52,12 @@ func main() {
 	}
 
 	// Try to draw a square, and a square beside it on same border.
-	_, _, _, err = canvas.AddShape(validateNum, blockartlib.PATH, "M 0 250 H 100 V 350 h -100 Z", "fill", "blue")
+	_, _, _, err = canvas.AddShape(validateNum, blockartlib.PATH, "M 0 250 H 100 V 350 h -100 Z", "blue", "blue")
 	if checkError(err) != nil {
 		return
 	}
 
-	_, _, _, err = canvas.AddShape(validateNum, blockartlib.PATH, "M 200 250 V 350 H 100 v -100 Z", "fill", "red")
+	_, _, _, err = canvas.AddShape(validateNum, blockartlib.PATH, "M 200 250 V 350 H 100 v -100 Z", "red", "red")
 	if checkError(err) != nil {
 		return
 	}
@@ -78,7 +78,6 @@ func main() {
 	if checkError(err) != nil {
 		return
 	}
-
 
 }
 
