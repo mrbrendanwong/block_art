@@ -309,6 +309,7 @@ func (a ArtNode) AddShape(validateNum uint8, shapeType shared.ShapeType, shapeSv
 		return "", "", 0, error
 	}
 
+	fmt.Println("ADDING SHAPE")
 	InkRemaining = InkRemaining - InkRequired
 	return addShapeResponse.ShapeHash, addShapeResponse.BlockHash, InkRemaining, nil
 }
