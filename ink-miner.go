@@ -56,7 +56,8 @@ var (
 
 	// Channel to signal incoming ops, blocks
 	opChannel          chan int // int is a placeholder -> may be an op string later
-	opComplete         chan string
+	opComplete         chan int
+	hashRetrieved      chan string
 	recvBlockChannel   chan int
 	validationComplete chan Block
 	powComplete        chan int
@@ -313,7 +314,8 @@ func receiveOp(op *shared.Op) {
 		// check whether block validated was the current op's block
 		if isOpInBlock(op, block) {
 			fmt.Println("OPCOMPLETE")
-			opComplete <- block.Hash
+			opComplete <- 1
+			hashRetrieved <- block.Hash
 		}
 	default:
 		// get leaf info
@@ -328,7 +330,8 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
 			fmt.Println("OPCOMPLETE")
-			opComplete <- block.Hash
+			opComplete <- 1
+			hashRetrieved <- block.Hash
 		}
 	default:
 		// get new hash and nonce
@@ -344,7 +347,8 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
 			fmt.Println("OPCOMPLETE")
-			opComplete <- block.Hash
+			opComplete <- 1
+			hashRetrieved <- block.Hash
 		}
 	default:
 		// complete pow //
@@ -369,7 +373,8 @@ func receiveOp(op *shared.Op) {
 		BlockchainRef.lock.Unlock()
 		// can now stop working on op
 		fmt.Println("OPCOMPLETE")
-		opComplete <- block.Hash
+		opComplete <- 1
+		hashRetrieved <- block.Hash
 	}
 }
 
@@ -854,7 +859,8 @@ func startMining() {
 
 	// Channels
 	opChannel = make(chan int, 3)
-	opComplete = make(chan string, 3)
+	opComplete = make(chan int, 3)
+	hashRetrieved = make(chan string, 3)
 	powComplete = make(chan int, 3)
 	opBlockCreation = make(chan int, 3)
 	opBlockCreated = make(chan int, 3)
@@ -1140,7 +1146,7 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	// f too
 	receiveOp(op)
 
-	hash := <-opComplete
+	hash := <-hashRetrieved
 	fmt.Println("OP COMPLETED AND HASH RETURNED: %s\n", hash)
 	reply.ShapeHash = op.ShapeOpSig.R.String() + op.ShapeOpSig.S.String()
 	reply.BlockHash = hash
