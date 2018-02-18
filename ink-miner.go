@@ -229,14 +229,10 @@ func NewBlockchain() *Blockchain {
 // disseminate op
 // Send validated op to all connected miners
 func sendOp(op *shared.Op) error {
-	b, err := json.Marshal(op)
-	if err != nil {
-		outLog.Printf("Error marshalling op into string:%s\n", err)
-	}
-	//var m []string
+	fmt.Println("SENDING AN OP")
 	var reply *bool
 	for _, value := range connectedMiners.Miners {
-		value.MinerConn.Call("InkMiner.ReceiveOp", b, reply)
+		value.MinerConn.Call("InkMiner.ReceiveOp", op, reply)
 	}
 	return nil
 
@@ -1141,7 +1137,7 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	//return error
 	//}
 	// send validated op to neighbours
-	//sendOp(op)
+	sendOp(op)
 	// start POW mysel
 	// f too
 	receiveOp(op)
