@@ -229,7 +229,7 @@ func NewBlockchain() *Blockchain {
 // disseminate op
 // Send validated op to all connected miners
 func sendOp(op *shared.Op) error {
-	fmt.Println("SENDING AN OP")
+	outLog.Println("Sending op")
 	var reply *bool
 	for _, value := range connectedMiners.Miners {
 		value.MinerConn.Call("InkMiner.ReceiveOp", op, reply)
@@ -240,7 +240,7 @@ func sendOp(op *shared.Op) error {
 
 // ReceiveOp is called from another miner which sent it a valid op
 func (m InkMiner) ReceiveOp(op *shared.Op, reply *bool) error {
-	fmt.Printf("Miner: %s received operation", pubKeyToString(PubKey))
+	outLog.Println("Received operation")
 	receiveOp(op)
 	*reply = true
 	return nil
@@ -309,7 +309,6 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		// check whether block validated was the current op's block
 		if isOpInBlock(op, block) {
-			fmt.Println("OPCOMPLETE")
 			opComplete <- 1
 			hashRetrieved <- block.Hash
 		}
@@ -325,7 +324,6 @@ func receiveOp(op *shared.Op) {
 	case <-recvBlockChannel:
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
-			fmt.Println("OPCOMPLETE")
 			opComplete <- 1
 			hashRetrieved <- block.Hash
 		}
@@ -342,7 +340,6 @@ func receiveOp(op *shared.Op) {
 	case <-recvBlockChannel:
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
-			fmt.Println("OPCOMPLETE")
 			opComplete <- 1
 			hashRetrieved <- block.Hash
 		}
@@ -368,7 +365,6 @@ func receiveOp(op *shared.Op) {
 		BlockchainRef.LastBlock = block
 		BlockchainRef.lock.Unlock()
 		// can now stop working on op
-		fmt.Println("OPCOMPLETE")
 		opComplete <- 1
 		hashRetrieved <- block.Hash
 	}
@@ -509,9 +505,9 @@ func ConnectServer(serverAddr string) {
 	} else {
 		//TODO do some shit to get the actual blocks
 		// TODO ask for the missing blocks from
-		fmt.Println("ASKING FOR CHAIN FROM MINER")
+		outLog.Println("Asking for chain from miner")
 		getChainFromMiner()
-		fmt.Printf("GOT CHAIN FROM MINER SIZE:%d\n", len(BlockchainRef.Blocks))
+		outLog.Println("Received chain from miner of size:%d\n", len(BlockchainRef.Blocks))
 		//getLongestChain()
 	}
 
@@ -869,14 +865,10 @@ func startMining() {
 	findLongestBranch:
 		select {
 		case <-opChannel:
-			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
-			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
-			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
-			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
@@ -889,14 +881,10 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
-			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
-			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
-			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
-			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
@@ -906,14 +894,10 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
-			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
-			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
-			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
-			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			// Create block, send block to miners, add to blockchain, increase ink supply
@@ -927,7 +911,7 @@ func startMining() {
 			sendBlock(block)
 			BlockchainRef.lock.Lock()
 			BlockchainRef.Blocks = append(BlockchainRef.Blocks, block)
-			fmt.Println("ADDING NOOP BLOCK")
+			outLog.Println("Adding Noop block")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
 			// Update last block
@@ -1130,7 +1114,6 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 }
 
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
-	fmt.Println("ADD SHAPE FROM ART NODE SENT")
 	// validate op myself
 	//error := validateOp(op)
 	//if error != nil {
@@ -1143,7 +1126,6 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	receiveOp(op)
 
 	hash := <-hashRetrieved
-	fmt.Println("OP COMPLETED AND HASH RETURNED: %s\n", hash)
 	reply.ShapeHash = op.ShapeOpSig.R.String() + op.ShapeOpSig.S.String()
 	reply.BlockHash = hash
 	return nil
@@ -1174,7 +1156,6 @@ func (m InkMiner) GetShape(shapeHash string, shape *shared.ShapeOp) (err error) 
 }
 
 func (m InkMiner) GetShapes(blockHash string, shapes *[]string) (err error) {
-	fmt.Println("Looking for shapes corresponding to : ", blockHash)
 	BlockchainRef.lock.RLock()
 	for i := range BlockchainRef.Blocks {
 		if BlockchainRef.Blocks[i].Hash == blockHash {
@@ -1209,7 +1190,6 @@ func (m InkMiner) GetChildren(blockHash string, children *[]string) (err error) 
 		}
 	}
 	BlockchainRef.lock.RUnlock()
-	fmt.Println("Children: ", res)
 	if found == false {
 		// passed blockHash not found in blockchain
 		return blockartlib.InvalidBlockHashError(blockHash)
