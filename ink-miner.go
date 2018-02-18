@@ -56,7 +56,7 @@ var (
 
 	// Channel to signal incoming ops, blocks
 	opChannel          chan int // int is a placeholder -> may be an op string later
-	opComplete         chan int
+	opComplete         chan string
 	recvBlockChannel   chan int
 	validationComplete chan Block
 	powComplete        chan int
@@ -312,7 +312,8 @@ func receiveOp(op *shared.Op) {
 		block := <-validationComplete
 		// check whether block validated was the current op's block
 		if isOpInBlock(op, block) {
-			opComplete <- 1
+			fmt.Println("OPCOMPLETE")
+			opComplete <- block.Hash
 		}
 	default:
 		// get leaf info
@@ -326,7 +327,8 @@ func receiveOp(op *shared.Op) {
 	case <-recvBlockChannel:
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
-			opComplete <- 1
+			fmt.Println("OPCOMPLETE")
+			opComplete <- block.Hash
 		}
 	default:
 		// get new hash and nonce
@@ -341,7 +343,8 @@ func receiveOp(op *shared.Op) {
 	case <-recvBlockChannel:
 		block := <-validationComplete
 		if isOpInBlock(op, block) {
-			opComplete <- 1
+			fmt.Println("OPCOMPLETE")
+			opComplete <- block.Hash
 		}
 	default:
 		// complete pow //
@@ -365,7 +368,8 @@ func receiveOp(op *shared.Op) {
 		BlockchainRef.LastBlock = block
 		BlockchainRef.lock.Unlock()
 		// can now stop working on op
-		opComplete <- 1
+		fmt.Println("OPCOMPLETE")
+		opComplete <- block.Hash
 	}
 }
 
@@ -511,7 +515,7 @@ func ConnectServer(serverAddr string) {
 	}
 
 	// start mining noop blocks
-	//go startMining()
+	go startMining()
 
 	// Monitor the miner threshold
 	go monitorThreshold()
@@ -850,6 +854,7 @@ func startMining() {
 
 	// Channels
 	opChannel = make(chan int, 3)
+	opComplete = make(chan string, 3)
 	powComplete = make(chan int, 3)
 	opBlockCreation = make(chan int, 3)
 	opBlockCreated = make(chan int, 3)
@@ -862,10 +867,14 @@ func startMining() {
 	findLongestBranch:
 		select {
 		case <-opChannel:
+			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
+			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
+			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
+			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			//Get leaf and info above
@@ -878,10 +887,14 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
+			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
+			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
+			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
+			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			// Get the value of new hash block and nonce
@@ -891,10 +904,14 @@ func startMining() {
 		}
 		select {
 		case <-opChannel:
+			fmt.Println("WAITING FOR OP COMPLETE")
 			<-opComplete
+			fmt.Println("OP IS COMPLETE")
 			goto findLongestBranch
 		case <-recvBlockChannel:
+			fmt.Println("WAITING FOR BLOCK VALIDATION")
 			<-validationComplete
+			fmt.Println("BLOCK VALIDATION COMPLETE")
 			goto findLongestBranch
 		default:
 			// Create block, send block to miners, add to blockchain, increase ink supply
@@ -911,7 +928,6 @@ func startMining() {
 			fmt.Println("ADDING NOOP BLOCK")
 			ink := inkMap[pKeyString]
 			inkMap[pKeyString] = (ink + Settings.InkPerNoOpBlock)
-
 			// Update last block
 			BlockchainRef.LastBlock = block
 			BlockchainRef.lock.Unlock()
@@ -1112,6 +1128,7 @@ func (m InkMiner) GetInk(args shared.Message, reply *shared.Message) (err error)
 }
 
 func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err error) {
+	fmt.Println("ADD SHAPE FROM ART NODE SENT")
 	// validate op myself
 	//error := validateOp(op)
 	//if error != nil {
@@ -1121,9 +1138,10 @@ func (m InkMiner) AddShape(op *shared.Op, reply *shared.AddShapeResponse) (err e
 	//sendOp(op)
 	// start POW mysel
 	// f too
-	//receiveOp(op)
+	receiveOp(op)
 
-	hash := createBlock(op) // TODO: REMOVE
+	hash := <-opComplete
+	fmt.Println("OP COMPLETED AND HASH RETURNED: %s\n", hash)
 	reply.ShapeHash = op.ShapeOpSig.R.String() + op.ShapeOpSig.S.String()
 	reply.BlockHash = hash
 	return nil
